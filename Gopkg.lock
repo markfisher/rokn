@@ -341,6 +341,13 @@
   version = "v1.0.1"
 
 [[projects]]
+  digest = "1:8e88a081e4f2b68a747a3a8ba9dcc64b40993a30827083a36c6e5f34be86d7a9"
+  name = "github.com/michaelklishin/rabbit-hole"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "cb015faf596bc8870ea083484cfe49f6803c89e5"
+
+[[projects]]
   digest = "1:2f42fa12d6911c7b7659738758631bec870b7e9b4c6be5444f963cdcfccc191f"
   name = "github.com/modern-go/concurrent"
   packages = ["."]
@@ -1184,6 +1191,7 @@
   input-imports = [
     "github.com/cloudevents/sdk-go/v2",
     "github.com/kelseyhightower/envconfig",
+    "github.com/michaelklishin/rabbit-hole",
     "github.com/streadway/amqp",
     "go.uber.org/zap",
     "k8s.io/api/apps/v1",

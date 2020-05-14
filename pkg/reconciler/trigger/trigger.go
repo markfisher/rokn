@@ -121,11 +121,18 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1alpha1.Trigger) pkg
 		return err
 	}
 
+	secret, err := r.getRabbitmqSecret(ctx, t)
+	if err != nil {
+		return err
+	}
+
 	err = resources.MakeBinding(&resources.BindingArgs{
-		Trigger:     t,
-		QueueName:   queue.Name,
-		RoutingKey:  "",
-		RabbitmqURL: rabbitmqURL,
+		Trigger:          t,
+		QueueName:        queue.Name,
+		RoutingKey:       "",
+		RabbitmqHost:     string(secret.Data["host"]),
+		RabbitmqUsername: string(secret.Data["username"]),
+		RabbitmqPassword: string(secret.Data["password"]),
 	})
 	if err != nil {
 		logging.FromContext(ctx).Error("Problem declaring Trigger Queue Binding", zap.Error(err))
@@ -314,30 +321,10 @@ func (r *Reconciler) getRabbitmqSecret(ctx context.Context, t *v1alpha1.Trigger)
 	return nil, errors.New("Broker.Spec.Config is required")
 }
 
-func (r *Reconciler) getRabbitmqSecretData(ctx context.Context, s *corev1.Secret, key string) (string, error) {
-	val := s.Data[key]
-	if val == nil {
-		return "", fmt.Errorf("Secret missing key %s", key)
-	}
-	return string(val), nil
-}
-
 func (r *Reconciler) rabbitmqURL(ctx context.Context, t *v1alpha1.Trigger) (string, error) {
 	s, err := r.getRabbitmqSecret(ctx, t)
 	if err != nil {
 		return "", err
 	}
-	host, err := r.getRabbitmqSecretData(ctx, s, "host")
-	if err != nil {
-		return "", err
-	}
-	username, err := r.getRabbitmqSecretData(ctx, s, "username")
-	if err != nil {
-		return "", err
-	}
-	password, err := r.getRabbitmqSecretData(ctx, s, "password")
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("amqp://%s:%s@%s:5672", username, password, host), nil
+	return fmt.Sprintf("amqp://%s:%s@%s:5672", s.Data["username"], s.Data["password"], s.Data["host"]), nil
 }

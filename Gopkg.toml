@@ -36,6 +36,10 @@
   name = "k8s.io/code-generator"
   version = "kubernetes-1.16.4"
 
+[[constraint]]
+  name = "github.com/michaelklishin/rabbit-hole"
+  revision = "cb015faf596bc8870ea083484cfe49f6803c89e5"
+
 [prune]
   go-tests = true
   unused-packages = true
