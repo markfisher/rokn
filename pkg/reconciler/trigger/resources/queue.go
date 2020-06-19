@@ -21,12 +21,12 @@ import (
 
 	"github.com/streadway/amqp"
 
-	eventingv1alpha1 "knative.dev/eventing/pkg/apis/eventing/v1alpha1"
+	eventingv1beta1 "knative.dev/eventing/pkg/apis/eventing/v1beta1"
 )
 
 // QueueArgs are the arguments to create a Trigger's RabbitMQ Queue.
 type QueueArgs struct {
-	Trigger     *eventingv1alpha1.Trigger
+	Trigger     *eventingv1beta1.Trigger
 	RabbitmqURL string
 }
 

@@ -35,11 +35,10 @@ import (
 	"knative.dev/pkg/logging"
 
 	"github.com/markfisher/rokn/pkg/reconciler/trigger/resources"
-	"knative.dev/eventing/pkg/apis/eventing/v1alpha1"
-	messagingv1alpha1 "knative.dev/eventing/pkg/apis/messaging/v1alpha1"
+	"knative.dev/eventing/pkg/apis/eventing/v1beta1"
 	clientset "knative.dev/eventing/pkg/client/clientset/versioned"
-	triggerreconciler "knative.dev/eventing/pkg/client/injection/reconciler/eventing/v1alpha1/trigger"
-	eventinglisters "knative.dev/eventing/pkg/client/listers/eventing/v1alpha1"
+	triggerreconciler "knative.dev/eventing/pkg/client/injection/reconciler/eventing/v1beta1/trigger"
+	eventinglisters "knative.dev/eventing/pkg/client/listers/eventing/v1beta1"
 
 	"knative.dev/eventing/pkg/duck"
 	pkgreconciler "knative.dev/pkg/reconciler"
@@ -76,7 +75,7 @@ type Reconciler struct {
 var _ triggerreconciler.Interface = (*Reconciler)(nil)
 var _ triggerreconciler.Finalizer = (*Reconciler)(nil)
 
-var triggerGVK = v1alpha1.SchemeGroupVersion.WithKind("Trigger")
+var triggerGVK = v1beta1.SchemeGroupVersion.WithKind("Trigger")
 
 // ReconcilerArgs are the arguments needed to create a broker.Reconciler.
 type ReconcilerArgs struct {
@@ -88,7 +87,7 @@ func newReconciledNormal(namespace, name string) pkgreconciler.Event {
 	return pkgreconciler.NewEvent(corev1.EventTypeNormal, triggerReconciled, "Trigger reconciled: \"%s/%s\"", namespace, name)
 }
 
-func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1alpha1.Trigger) pkgreconciler.Event {
+func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgreconciler.Event {
 	logging.FromContext(ctx).Debug("Reconciling", zap.Any("Trigger", t))
 	t.Status.InitializeConditions()
 
@@ -157,16 +156,12 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1alpha1.Trigger) pkg
 	t.Status.MarkSubscriberResolvedSucceeded()
 
 	// TODO no Subscription
-	t.Status.PropagateSubscriptionStatus(&messagingv1alpha1.SubscriptionStatus{
-		Status: duckv1.Status{
-			Conditions: duckv1.Conditions{
-				apis.Condition{
-					Type:   "Ready",
-					Status: "True",
-				},
-			},
+	t.Status.PropagateSubscriptionCondition(
+		&apis.Condition{
+			Type:   "Ready",
+			Status: "True",
 		},
-	})
+	)
 
 	if err := r.reconcileDispatcherDeployment(ctx, t, subscriberURI); err != nil {
 		logging.FromContext(ctx).Error("Problem reconciling dispatcher Deployment", zap.Error(err))
@@ -177,7 +172,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1alpha1.Trigger) pkg
 	return nil
 }
 
-func (r *Reconciler) FinalizeKind(ctx context.Context, t *v1alpha1.Trigger) pkgreconciler.Event {
+func (r *Reconciler) FinalizeKind(ctx context.Context, t *v1beta1.Trigger) pkgreconciler.Event {
 	rabbitmqURL, err := r.rabbitmqURL(ctx, t)
 	if err != nil {
 		return err
@@ -216,7 +211,7 @@ func (r *Reconciler) reconcileDeployment(ctx context.Context, d *v1.Deployment) 
 }
 
 //reconcileDispatcherDeployment reconciles Trigger's dispatcher deployment.
-func (r *Reconciler) reconcileDispatcherDeployment(ctx context.Context, t *v1alpha1.Trigger, sub *apis.URL) error {
+func (r *Reconciler) reconcileDispatcherDeployment(ctx context.Context, t *v1beta1.Trigger, sub *apis.URL) error {
 	rabbitmqSecret, err := r.getRabbitmqSecret(ctx, t)
 	if err != nil {
 		return err
@@ -232,7 +227,7 @@ func (r *Reconciler) reconcileDispatcherDeployment(ctx context.Context, t *v1alp
 	return r.reconcileDeployment(ctx, expected)
 }
 
-func (r *Reconciler) propagateBrokerStatus(ctx context.Context, t *v1alpha1.Trigger) error {
+func (r *Reconciler) propagateBrokerStatus(ctx context.Context, t *v1beta1.Trigger) error {
 	broker, err := r.brokerLister.Brokers(t.Namespace).Get(t.Spec.Broker)
 	if err != nil {
 		if apierrs.IsNotFound(err) {
@@ -241,14 +236,14 @@ func (r *Reconciler) propagateBrokerStatus(ctx context.Context, t *v1alpha1.Trig
 			return fmt.Errorf("retrieving broker: %v", err)
 		}
 	} else {
-		t.Status.PropagateBrokerStatus(&broker.Status)
+		t.Status.PropagateBrokerCondition(broker.Status.GetTopLevelCondition())
 	}
 	return nil
 }
 
-func (r *Reconciler) checkDependencyAnnotation(ctx context.Context, t *v1alpha1.Trigger) error {
-	if dependencyAnnotation, ok := t.GetAnnotations()[v1alpha1.DependencyAnnotation]; ok {
-		dependencyObjRef, err := v1alpha1.GetObjRefFromDependencyAnnotation(dependencyAnnotation)
+func (r *Reconciler) checkDependencyAnnotation(ctx context.Context, t *v1beta1.Trigger) error {
+	if dependencyAnnotation, ok := t.GetAnnotations()[v1beta1.DependencyAnnotation]; ok {
+		dependencyObjRef, err := v1beta1.GetObjRefFromDependencyAnnotation(dependencyAnnotation)
 		if err != nil {
 			t.Status.MarkDependencyFailed("ReferenceError", "Unable to unmarshal objectReference from dependency annotation of trigger: %v", err)
 			return fmt.Errorf("getting object ref from dependency annotation %q: %v", dependencyAnnotation, err)
@@ -267,7 +262,7 @@ func (r *Reconciler) checkDependencyAnnotation(ctx context.Context, t *v1alpha1.
 	return nil
 }
 
-func (r *Reconciler) propagateDependencyReadiness(ctx context.Context, t *v1alpha1.Trigger, dependencyObjRef corev1.ObjectReference) error {
+func (r *Reconciler) propagateDependencyReadiness(ctx context.Context, t *v1beta1.Trigger, dependencyObjRef corev1.ObjectReference) error {
 	lister, err := r.kresourceTracker.ListerFor(dependencyObjRef)
 	if err != nil {
 		t.Status.MarkDependencyUnknown("ListerDoesNotExist", "Failed to retrieve lister: %v", err)
@@ -297,7 +292,7 @@ func (r *Reconciler) propagateDependencyReadiness(ctx context.Context, t *v1alph
 	return nil
 }
 
-func (r *Reconciler) getRabbitmqSecret(ctx context.Context, t *v1alpha1.Trigger) (*corev1.Secret, error) {
+func (r *Reconciler) getRabbitmqSecret(ctx context.Context, t *v1beta1.Trigger) (*corev1.Secret, error) {
 	b, err := r.brokerLister.Brokers(t.Namespace).Get(t.Spec.Broker)
 	if err != nil {
 		return nil, err
@@ -321,7 +316,7 @@ func (r *Reconciler) getRabbitmqSecret(ctx context.Context, t *v1alpha1.Trigger)
 	return nil, errors.New("Broker.Spec.Config is required")
 }
 
-func (r *Reconciler) rabbitmqURL(ctx context.Context, t *v1alpha1.Trigger) (string, error) {
+func (r *Reconciler) rabbitmqURL(ctx context.Context, t *v1beta1.Trigger) (string, error) {
 	s, err := r.getRabbitmqSecret(ctx, t)
 	if err != nil {
 		return "", err

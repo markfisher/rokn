@@ -35,15 +35,15 @@ import (
 	"knative.dev/pkg/logging"
 
 	"github.com/markfisher/rokn/pkg/reconciler/broker/resources"
-	eventingduckv1alpha1 "knative.dev/eventing/pkg/apis/duck/v1alpha1"
-	"knative.dev/eventing/pkg/apis/eventing/v1alpha1"
+	duckv1beta1 "knative.dev/eventing/pkg/apis/duck/v1beta1"
+	"knative.dev/eventing/pkg/apis/eventing/v1beta1"
 	clientset "knative.dev/eventing/pkg/client/clientset/versioned"
-	brokerreconciler "knative.dev/eventing/pkg/client/injection/reconciler/eventing/v1alpha1/broker"
-	eventinglisters "knative.dev/eventing/pkg/client/listers/eventing/v1alpha1"
+	brokerreconciler "knative.dev/eventing/pkg/client/injection/reconciler/eventing/v1beta1/broker"
+	eventinglisters "knative.dev/eventing/pkg/client/listers/eventing/v1beta1"
 
 	"knative.dev/eventing/pkg/duck"
 	"knative.dev/eventing/pkg/reconciler/names"
-	duckv1alpha1 "knative.dev/pkg/apis/duck/v1alpha1"
+	pkgduckv1 "knative.dev/pkg/apis/duck/v1"
 	pkgreconciler "knative.dev/pkg/reconciler"
 	"knative.dev/pkg/resolver"
 )
@@ -82,7 +82,7 @@ type Reconciler struct {
 var _ brokerreconciler.Interface = (*Reconciler)(nil)
 var _ brokerreconciler.Finalizer = (*Reconciler)(nil)
 
-var brokerGVK = v1alpha1.SchemeGroupVersion.WithKind("Broker")
+var brokerGVK = v1beta1.SchemeGroupVersion.WithKind("Broker")
 
 // ReconcilerArgs are the arguments needed to create a broker.Reconciler.
 type ReconcilerArgs struct {
@@ -94,14 +94,14 @@ func newReconciledNormal(namespace, name string) pkgreconciler.Event {
 	return pkgreconciler.NewEvent(corev1.EventTypeNormal, brokerReconciled, "Broker reconciled: \"%s/%s\"", namespace, name)
 }
 
-func (r *Reconciler) ReconcileKind(ctx context.Context, b *v1alpha1.Broker) pkgreconciler.Event {
+func (r *Reconciler) ReconcileKind(ctx context.Context, b *v1beta1.Broker) pkgreconciler.Event {
 	logging.FromContext(ctx).Debug("Reconciling", zap.Any("Broker", b))
-	b.Status.InitializeConditions()
+	//b.Status.InitializeConditions()
 
 	// TODO broker coupled to channels
-	b.Status.PropagateTriggerChannelReadiness(&eventingduckv1alpha1.ChannelableStatus{
-		AddressStatus: duckv1alpha1.AddressStatus{
-			Address: &duckv1alpha1.Addressable{},
+	b.Status.PropagateTriggerChannelReadiness(&duckv1beta1.ChannelableStatus{
+		AddressStatus: pkgduckv1.AddressStatus{
+			Address: &pkgduckv1.Addressable{},
 		},
 	})
 	b.Status.ObservedGeneration = b.Generation
@@ -151,7 +151,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *v1alpha1.Broker) pkgr
 	return nil
 }
 
-func (r *Reconciler) FinalizeKind(ctx context.Context, b *v1alpha1.Broker) pkgreconciler.Event {
+func (r *Reconciler) FinalizeKind(ctx context.Context, b *v1beta1.Broker) pkgreconciler.Event {
 	rabbitmqURL, err := r.rabbitmqURL(ctx, b)
 	if err != nil {
 		return err
@@ -214,7 +214,7 @@ func (r *Reconciler) reconcileService(ctx context.Context, svc *corev1.Service) 
 }
 
 // reconcileIngressDeploymentCRD reconciles the Ingress Deployment.
-func (r *Reconciler) reconcileIngressDeployment(ctx context.Context, b *v1alpha1.Broker) error {
+func (r *Reconciler) reconcileIngressDeployment(ctx context.Context, b *v1beta1.Broker) error {
 	secret, err := r.getRabbitmqSecret(ctx, b)
 	if err != nil {
 		return err
@@ -228,7 +228,7 @@ func (r *Reconciler) reconcileIngressDeployment(ctx context.Context, b *v1alpha1
 }
 
 // reconcileIngressService reconciles the Ingress Service.
-func (r *Reconciler) reconcileIngressService(ctx context.Context, b *v1alpha1.Broker) (*corev1.Endpoints, error) {
+func (r *Reconciler) reconcileIngressService(ctx context.Context, b *v1beta1.Broker) (*corev1.Endpoints, error) {
 	expected := resources.MakeIngressService(b)
 	return r.reconcileService(ctx, expected)
 }
@@ -241,7 +241,7 @@ func brokerLabels(name string) map[string]string {
 }
 */
 
-func (r *Reconciler) getRabbitmqSecret(ctx context.Context, b *v1alpha1.Broker) (*corev1.Secret, error) {
+func (r *Reconciler) getRabbitmqSecret(ctx context.Context, b *v1beta1.Broker) (*corev1.Secret, error) {
 	if b.Spec.Config != nil {
 		if b.Spec.Config.Kind == "Secret" && b.Spec.Config.APIVersion == "v1" {
 			if b.Spec.Config.Namespace == "" || b.Spec.Config.Name == "" {
@@ -268,7 +268,7 @@ func (r *Reconciler) getRabbitmqSecretData(ctx context.Context, s *corev1.Secret
 	return string(val), nil
 }
 
-func (r *Reconciler) rabbitmqURL(ctx context.Context, b *v1alpha1.Broker) (string, error) {
+func (r *Reconciler) rabbitmqURL(ctx context.Context, b *v1beta1.Broker) (string, error) {
 	s, err := r.getRabbitmqSecret(ctx, b)
 	if err != nil {
 		return "", err

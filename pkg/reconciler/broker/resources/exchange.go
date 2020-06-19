@@ -20,12 +20,12 @@ import (
 	"fmt"
 
 	"github.com/streadway/amqp"
-	eventingv1alpha1 "knative.dev/eventing/pkg/apis/eventing/v1alpha1"
+	eventingv1beta1 "knative.dev/eventing/pkg/apis/eventing/v1beta1"
 )
 
 // ExchangeArgs are the arguments to create a RabbitMQ Exchange.
 type ExchangeArgs struct {
-	Broker      *eventingv1alpha1.Broker
+	Broker      *eventingv1beta1.Broker
 	RabbitmqURL string
 }
 

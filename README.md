@@ -65,13 +65,13 @@ EOF
 create a Ping Source:
 ```
 kubectl apply -f - << EOF
-  apiVersion: sources.knative.dev/v1alpha1
+  apiVersion: sources.knative.dev/v1alpha2
   kind: PingSource
   metadata:
     name: ping-source
   spec:
     schedule: "*/1 * * * *"
-    data: '{"message": "Hello world!"}'
+    jsonData: '{"message": "Hello world!"}'
     sink:
       ref:
         apiVersion: eventing.knative.dev/v1beta1

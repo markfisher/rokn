@@ -29,10 +29,10 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"knative.dev/eventing/pkg/apis/eventing"
-	"knative.dev/eventing/pkg/apis/eventing/v1alpha1"
+	"knative.dev/eventing/pkg/apis/eventing/v1beta1"
 
-	brokerinformer "knative.dev/eventing/pkg/client/injection/informers/eventing/v1alpha1/broker"
-	brokerreconciler "knative.dev/eventing/pkg/client/injection/reconciler/eventing/v1alpha1/broker"
+	brokerinformer "knative.dev/eventing/pkg/client/injection/informers/eventing/v1beta1/broker"
+	brokerreconciler "knative.dev/eventing/pkg/client/injection/reconciler/eventing/v1beta1/broker"
 	"knative.dev/eventing/pkg/duck"
 	"knative.dev/pkg/client/injection/ducks/duck/v1/addressable"
 	"knative.dev/pkg/client/injection/ducks/duck/v1/conditions"
@@ -103,7 +103,7 @@ func NewController(
 	})
 
 	serviceInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
-		FilterFunc: controller.FilterGroupKind(v1alpha1.Kind("Broker")),
+		FilterFunc: controller.FilterGroupKind(v1beta1.Kind("Broker")),
 		Handler:    controller.HandleAll(impl.EnqueueControllerOf),
 	})
 
@@ -113,7 +113,7 @@ func NewController(
 	})
 
 	deploymentInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
-		FilterFunc: controller.FilterGroupKind(v1alpha1.Kind("Broker")),
+		FilterFunc: controller.FilterGroupKind(v1beta1.Kind("Broker")),
 		Handler:    controller.HandleAll(impl.EnqueueControllerOf),
 	})
 

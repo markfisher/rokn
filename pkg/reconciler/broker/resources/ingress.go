@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"knative.dev/eventing/pkg/apis/eventing"
-	eventingv1alpha1 "knative.dev/eventing/pkg/apis/eventing/v1alpha1"
+	eventingv1beta1 "knative.dev/eventing/pkg/apis/eventing/v1beta1"
 	"knative.dev/pkg/kmeta"
 	"knative.dev/pkg/system"
 )
@@ -36,7 +36,7 @@ const (
 
 // IngressArgs are the arguments to create a Broker's ingress Deployment.
 type IngressArgs struct {
-	Broker *eventingv1alpha1.Broker
+	Broker *eventingv1beta1.Broker
 	Image  string
 	//ServiceAccountName string
 	RabbitMQHost       string
@@ -126,7 +126,7 @@ func MakeIngressDeployment(args *IngressArgs) *appsv1.Deployment {
 }
 
 // MakeIngressService creates the in-memory representation of the Broker's ingress Service.
-func MakeIngressService(b *eventingv1alpha1.Broker) *corev1.Service {
+func MakeIngressService(b *eventingv1beta1.Broker) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: b.Namespace,
