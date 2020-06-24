@@ -78,19 +78,21 @@ func main() {
 
 	go func() {
 		for d := range msgs {
-			log.Printf("received: %s", d.Body)
-
 			event := cloudevents.NewEvent()
 			err := json.Unmarshal(d.Body, &event)
 			if err != nil {
-				log.Fatalf("failed to unmarshal event")
+				log.Printf("failed to unmarshal event (nacking and not requeueing): %s", err)
+				d.Nack(false, false) // not multiple, do not requeue
+				continue
 			}
 
 			ctx := cloudevents.ContextWithTarget(context.Background(), subscriberURL)
 			if result := ceClient.Send(ctx, event); !cloudevents.IsACK(result) {
-				log.Fatalf("failed to send, %v", err)
+				log.Printf("failed downstream (nacking and requeueing): %s", result.Error())
+				d.Nack(false, true) // not multiple, do requeue
+				continue
 			}
-			d.Ack(false) // bool is for "multiple"
+			d.Ack(false) // not multiple
 		}
 	}()
 
