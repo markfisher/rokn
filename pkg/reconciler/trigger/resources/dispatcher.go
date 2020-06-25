@@ -109,6 +109,9 @@ func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
 						}, {
 							Name:  "SUBSCRIBER",
 							Value: args.Subscriber.String(),
+						}, {
+							Name:  "BROKER_URL",
+							Value: fmt.Sprintf("http://%s-broker.%s.svc.cluster.local", args.Trigger.Spec.Broker, args.Trigger.Namespace),
 						}},
 					}},
 				},

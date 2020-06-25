@@ -32,6 +32,7 @@ func main() {
 	username := os.Getenv("RABBITMQ_USERNAME")
 	password := os.Getenv("RABBITMQ_PASSWORD")
 	queueName := os.Getenv("QUEUE_NAME")
+	brokerURL := os.Getenv("BROKER_URL")
 	subscriberURL := os.Getenv("SUBSCRIBER")
 	url := fmt.Sprintf("amqp://%s:%s@%s:5672", username, password, host)
 	conn, err := amqp.Dial(url)
@@ -87,10 +88,17 @@ func main() {
 			}
 
 			ctx := cloudevents.ContextWithTarget(context.Background(), subscriberURL)
-			if result := ceClient.Send(ctx, event); !cloudevents.IsACK(result) {
+			response, result := ceClient.Request(ctx, event)
+			if !cloudevents.IsACK(result) {
 				log.Printf("failed downstream (nacking and requeueing): %s", result.Error())
 				d.Nack(false, true) // not multiple, do requeue
 				continue
+			}
+			if response != nil {
+				ctx = cloudevents.ContextWithTarget(context.Background(), brokerURL)
+				if result := ceClient.Send(ctx, *response); !cloudevents.IsACK(result) {
+					d.Nack(false, true) // not multiple, do requeue
+				}
 			}
 			d.Ack(false) // not multiple
 		}
