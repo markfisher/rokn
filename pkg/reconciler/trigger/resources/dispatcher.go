@@ -43,6 +43,7 @@ type DispatcherArgs struct {
 	RabbitMQHost       string
 	RabbitMQSecretName string
 	QueueName          string
+	BrokerURL          *apis.URL
 	Subscriber         *apis.URL
 }
 
@@ -111,7 +112,7 @@ func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
 							Value: args.Subscriber.String(),
 						}, {
 							Name:  "BROKER_URL",
-							Value: fmt.Sprintf("http://%s-broker.%s.svc.cluster.local", args.Trigger.Spec.Broker, args.Trigger.Namespace),
+							Value: args.BrokerURL.String(),
 						}},
 					}},
 				},
