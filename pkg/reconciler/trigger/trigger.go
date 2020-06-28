@@ -215,12 +215,17 @@ func (r *Reconciler) reconcileDispatcherDeployment(ctx context.Context, t *v1bet
 	if err != nil {
 		return err
 	}
+	broker, err := r.brokerLister.Brokers(t.Namespace).Get(t.Spec.Broker)
+	if err != nil {
+		return err
+	}
 	expected := resources.MakeDispatcherDeployment(&resources.DispatcherArgs{
 		Trigger: t,
 		Image:   r.dispatcherImage,
 		//ServiceAccountName string
 		RabbitMQSecretName: rabbitmqSecret.Name,
 		QueueName:          t.Name,
+		BrokerURL:          broker.Status.Address.URL,
 		Subscriber:         sub,
 	})
 	return r.reconcileDeployment(ctx, expected)
