@@ -110,7 +110,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 		return err
 	}
 
-	queue, err := resources.DeclareQueue(&resources.QueueArgs{
+	_, err = resources.DeclareQueue(&resources.QueueArgs{
 		Trigger:     t,
 		RabbitmqURL: rabbitmqURL,
 	})
@@ -127,7 +127,6 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 
 	err = resources.MakeBinding(&resources.BindingArgs{
 		Trigger:          t,
-		QueueName:        queue.Name,
 		RoutingKey:       "",
 		RabbitmqHost:     string(secret.Data["host"]),
 		RabbitmqUsername: string(secret.Data["username"]),

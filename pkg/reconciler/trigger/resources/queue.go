@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"github.com/markfisher/rokn/pkg/reconciler/io"
 
 	"github.com/streadway/amqp"
 
@@ -36,13 +37,13 @@ func DeclareQueue(args *QueueArgs) (*amqp.Queue, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer io.CloseAmqpResourceAndExitOnError(conn)
 
 	channel, err := conn.Channel()
 	if err != nil {
 		return nil, err
 	}
-	defer channel.Close()
+	defer io.CloseAmqpResourceAndExitOnError(channel)
 
 	queueName := fmt.Sprintf("%s/%s", args.Trigger.Namespace, args.Trigger.Name)
 	queue, err := channel.QueueDeclare(
@@ -56,7 +57,6 @@ func DeclareQueue(args *QueueArgs) (*amqp.Queue, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return &queue, nil
 }
 
@@ -66,13 +66,13 @@ func DeleteQueue(args *QueueArgs) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer io.CloseAmqpResourceAndExitOnError(conn)
 
 	channel, err := conn.Channel()
 	if err != nil {
 		return err
 	}
-	defer channel.Close()
+	defer io.CloseAmqpResourceAndExitOnError(channel)
 
 	queueName := fmt.Sprintf("%s/%s", args.Trigger.Namespace, args.Trigger.Name)
 	_, err = channel.QueueDelete(
@@ -81,9 +81,5 @@ func DeleteQueue(args *QueueArgs) error {
 		false, // if-empty
 		false, // nowait
 	)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }

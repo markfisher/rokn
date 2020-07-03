@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"github.com/markfisher/rokn/pkg/reconciler/io"
 
 	"github.com/streadway/amqp"
 	eventingv1beta1 "knative.dev/eventing/pkg/apis/eventing/v1beta1"
@@ -35,16 +36,16 @@ func DeclareExchange(args *ExchangeArgs) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer io.CloseAmqpResourceAndExitOnError(conn)
 
 	channel, err := conn.Channel()
 	if err != nil {
 		return err
 	}
-	defer channel.Close()
+	defer io.CloseAmqpResourceAndExitOnError(channel)
 
 	exchangeName := fmt.Sprintf("%s/%s", args.Broker.Namespace, ExchangeName(args.Broker.Name))
-	err = channel.ExchangeDeclare(
+	return channel.ExchangeDeclare(
 		exchangeName,
 		"headers", // kind
 		true,      // durable
@@ -53,11 +54,6 @@ func DeclareExchange(args *ExchangeArgs) error {
 		false,     // nowait
 		nil,       // args
 	)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // DeleteExchange deletes the Exchange for a Broker.
@@ -66,25 +62,20 @@ func DeleteExchange(args *ExchangeArgs) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer io.CloseAmqpResourceAndExitOnError(conn)
 
 	channel, err := conn.Channel()
 	if err != nil {
 		return err
 	}
-	defer channel.Close()
+	defer io.CloseAmqpResourceAndExitOnError(channel)
 
 	exchangeName := fmt.Sprintf("%s/%s", args.Broker.Namespace, ExchangeName(args.Broker.Name))
-	err = channel.ExchangeDelete(
+	return channel.ExchangeDelete(
 		exchangeName,
 		false, // if-unused
 		false, // nowait
 	)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // ExchangeName derives the Exchange name from the Broker name

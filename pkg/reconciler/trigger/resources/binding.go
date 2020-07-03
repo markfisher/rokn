@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"io/ioutil"
 	"reflect"
 
 	rabbithole "github.com/michaelklishin/rabbit-hole"
@@ -25,23 +26,23 @@ import (
 )
 
 const (
-	managementPort = 15672
-	bindingKey     = "x-knative-trigger"
+	DefaultManagementPort = 15672
+	BindingKey            = "x-knative-trigger"
 )
 
 // BindingArgs are the arguments to create a Trigger's Binding to a RabbitMQ Exchange.
 type BindingArgs struct {
-	Trigger          *eventingv1beta1.Trigger
-	RoutingKey       string
-	QueueName        string
-	RabbitmqHost     string
-	RabbitmqUsername string
-	RabbitmqPassword string
+	Trigger                *eventingv1beta1.Trigger
+	RoutingKey             string
+	RabbitmqHost           string
+	RabbitmqUsername       string
+	RabbitmqPassword       string
+	RabbitmqManagementPort int
 }
 
 // MakeBinding declares the Binding from the Broker's Exchange to the Trigger's Queue.
 func MakeBinding(args *BindingArgs) error {
-	adminURL := fmt.Sprintf("http://%s:%d", args.RabbitmqHost, managementPort)
+	adminURL := fmt.Sprintf("http://%s:%d", args.RabbitmqHost, managementPort(args))
 	c, err := rabbithole.NewClient(adminURL, args.RabbitmqUsername, args.RabbitmqPassword)
 	if err != nil {
 		return fmt.Errorf("Failed to create RabbitMQ Admin Client: %v", err)
@@ -51,7 +52,7 @@ func MakeBinding(args *BindingArgs) error {
 	queueName := fmt.Sprintf("%s/%s", args.Trigger.Namespace, args.Trigger.Name)
 	arguments := map[string]interface{}{
 		"x-match":  interface{}("all"),
-		bindingKey: interface{}(args.Trigger.Name),
+		BindingKey: interface{}(args.Trigger.Name),
 	}
 	for key, val := range args.Trigger.Spec.Filter.Attributes {
 		arguments[key] = interface{}(val)
@@ -65,14 +66,14 @@ func MakeBinding(args *BindingArgs) error {
 	}
 
 	for _, b := range bindings {
-		if val, exists := b.Arguments[bindingKey]; exists && val == args.Trigger.Name {
+		if val, exists := b.Arguments[BindingKey]; exists && val == args.Trigger.Name {
 			existing = &b
 			break
 		}
 	}
 
 	if existing == nil || !reflect.DeepEqual(existing.Arguments, arguments) {
-		_, err = c.DeclareBinding("/", rabbithole.BindingInfo{
+		response, err := c.DeclareBinding("/", rabbithole.BindingInfo{
 			Vhost:           "/",
 			Source:          exchangeName,
 			Destination:     queueName,
@@ -83,6 +84,10 @@ func MakeBinding(args *BindingArgs) error {
 		if err != nil {
 			return fmt.Errorf("Failed to declare Binding: %v", err)
 		}
+		if response.StatusCode != 201 {
+			responseBody, _ := ioutil.ReadAll(response.Body)
+			return fmt.Errorf("Failed to declare Binding. Expected 201 response, but got: %d.\n%s", response.StatusCode, string(responseBody))
+		}
 		if existing != nil {
 			_, err = c.DeleteBinding(existing.Vhost, *existing)
 			if err != nil {
@@ -91,6 +96,14 @@ func MakeBinding(args *BindingArgs) error {
 		}
 	}
 	return nil
+}
+
+func managementPort(args *BindingArgs) int {
+	configuredPort := args.RabbitmqManagementPort
+	if configuredPort > 0 {
+		return configuredPort
+	}
+	return DefaultManagementPort
 }
 
 // ExchangeName derives the Exchange name from the Broker name
