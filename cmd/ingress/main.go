@@ -19,7 +19,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 
@@ -28,16 +27,13 @@ import (
 )
 
 var (
-	host         = os.Getenv("RABBITMQ_HOST")
-	username     = os.Getenv("RABBITMQ_USERNAME")
-	password     = os.Getenv("RABBITMQ_PASSWORD")
+	brokerURL    = os.Getenv("BROKER_URL")
 	exchangeName = os.Getenv("EXCHANGE_NAME")
 	channel      *amqp.Channel
 )
 
 func main() {
-	url := fmt.Sprintf("amqp://%s:%s@%s:5672", username, password, host)
-	conn, err := amqp.Dial(url)
+	conn, err := amqp.Dial(brokerURL)
 	if err != nil {
 		log.Fatalf("failed to connect to RabbitMQ: %s", err)
 	}

@@ -43,12 +43,14 @@ type DispatcherArgs struct {
 	RabbitMQHost       string
 	RabbitMQSecretName string
 	QueueName          string
-	BrokerURL          *apis.URL
+	BrokerUrlSecretKey string
+	BrokerIngressURL   *apis.URL
 	Subscriber         *apis.URL
 }
 
 // MakeDispatcherDeployment creates the in-memory representation of the Broker's Dispatcher Deployment.
 func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
+	zero := int32(0)
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: args.Trigger.Namespace,
@@ -59,6 +61,7 @@ func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
 			Labels: DispatcherLabels(args.Trigger.Spec.Broker),
 		},
 		Spec: appsv1.DeploymentSpec{
+			Replicas: &zero,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: DispatcherLabels(args.Trigger.Spec.Broker),
 			},
@@ -75,33 +78,13 @@ func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
 							Name:  system.NamespaceEnvKey,
 							Value: system.Namespace(),
 						}, {
-							Name: "RABBITMQ_HOST",
+							Name: "BROKER_URL",
 							ValueFrom: &corev1.EnvVarSource{
 								SecretKeyRef: &corev1.SecretKeySelector{
 									LocalObjectReference: corev1.LocalObjectReference{
 										Name: args.RabbitMQSecretName,
 									},
-									Key: "host",
-								},
-							},
-						}, {
-							Name: "RABBITMQ_USERNAME",
-							ValueFrom: &corev1.EnvVarSource{
-								SecretKeyRef: &corev1.SecretKeySelector{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: args.RabbitMQSecretName,
-									},
-									Key: "username",
-								},
-							},
-						}, {
-							Name: "RABBITMQ_PASSWORD",
-							ValueFrom: &corev1.EnvVarSource{
-								SecretKeyRef: &corev1.SecretKeySelector{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: args.RabbitMQSecretName,
-									},
-									Key: "password",
+									Key: args.BrokerUrlSecretKey,
 								},
 							},
 						}, {
@@ -111,8 +94,8 @@ func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
 							Name:  "SUBSCRIBER",
 							Value: args.Subscriber.String(),
 						}, {
-							Name:  "BROKER_URL",
-							Value: args.BrokerURL.String(),
+							Name:  "BROKER_INGRESS_URL",
+							Value: args.BrokerIngressURL.String(),
 						}},
 					}},
 				},

@@ -20,6 +20,7 @@ import (
 	"context"
 	"log"
 
+	kedaclient "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/injection/client"
 	eventingclient "knative.dev/eventing/pkg/client/injection/client"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
 	"knative.dev/pkg/injection/clients/dynamicclient"
@@ -31,6 +32,7 @@ import (
 	"knative.dev/eventing/pkg/apis/eventing"
 	"knative.dev/eventing/pkg/apis/eventing/v1beta1"
 
+	triggerauthenticationinformer "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/injection/informers/keda/v1alpha1/triggerauthentication"
 	brokerinformer "knative.dev/eventing/pkg/client/injection/informers/eventing/v1beta1/broker"
 	brokerreconciler "knative.dev/eventing/pkg/client/injection/reconciler/eventing/v1beta1/broker"
 	"knative.dev/eventing/pkg/duck"
@@ -75,18 +77,21 @@ func NewController(
 	brokerInformer := brokerinformer.Get(ctx)
 	serviceInformer := serviceinformer.Get(ctx)
 	endpointsInformer := endpointsinformer.Get(ctx)
+	triggerAuthenticationInformer := triggerauthenticationinformer.Get(ctx)
 
 	r := &Reconciler{
-		eventingClientSet:         eventingclient.Get(ctx),
-		dynamicClientSet:          dynamicclient.Get(ctx),
-		kubeClientSet:             kubeclient.Get(ctx),
-		brokerLister:              brokerInformer.Lister(),
-		serviceLister:             serviceInformer.Lister(),
-		endpointsLister:           endpointsInformer.Lister(),
-		deploymentLister:          deploymentInformer.Lister(),
-		ingressImage:              env.IngressImage,
-		ingressServiceAccountName: env.IngressServiceAccount,
-		brokerClass:               env.BrokerClass,
+		kedaClientset:               kedaclient.Get(ctx),
+		eventingClientSet:           eventingclient.Get(ctx),
+		dynamicClientSet:            dynamicclient.Get(ctx),
+		kubeClientSet:               kubeclient.Get(ctx),
+		brokerLister:                brokerInformer.Lister(),
+		serviceLister:               serviceInformer.Lister(),
+		endpointsLister:             endpointsInformer.Lister(),
+		deploymentLister:            deploymentInformer.Lister(),
+		triggerAuthenticationLister: triggerAuthenticationInformer.Lister(),
+		ingressImage:                env.IngressImage,
+		ingressServiceAccountName:   env.IngressServiceAccount,
+		brokerClass:                 env.BrokerClass,
 	}
 
 	impl := brokerreconciler.NewImpl(ctx, r, env.BrokerClass)

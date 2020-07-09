@@ -41,6 +41,10 @@ import (
 	brokerreconciler "knative.dev/eventing/pkg/client/injection/reconciler/eventing/v1beta1/broker"
 	eventinglisters "knative.dev/eventing/pkg/client/listers/eventing/v1beta1"
 
+	kedaclientset "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/clientset/versioned"
+	kedalisters "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/listers/keda/v1alpha1"
+	kedav1alpha1 "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/v1alpha1"
+
 	"knative.dev/eventing/pkg/duck"
 	"knative.dev/eventing/pkg/reconciler/names"
 	pkgduckv1 "knative.dev/pkg/apis/duck/v1"
@@ -49,20 +53,24 @@ import (
 )
 
 const (
+	BrokerUrlSecretKey = "brokerURL"
+
 	// Name of the corev1.Events emitted from the Broker reconciliation process.
 	brokerReconciled = "BrokerReconciled"
 )
 
 type Reconciler struct {
+	kedaClientset     kedaclientset.Interface
 	eventingClientSet clientset.Interface
 	dynamicClientSet  dynamic.Interface
 	kubeClientSet     kubernetes.Interface
 
 	// listers index properties about resources
-	brokerLister     eventinglisters.BrokerLister
-	serviceLister    corev1listers.ServiceLister
-	endpointsLister  corev1listers.EndpointsLister
-	deploymentLister appsv1listers.DeploymentLister
+	brokerLister                eventinglisters.BrokerLister
+	serviceLister               corev1listers.ServiceLister
+	endpointsLister             corev1listers.EndpointsLister
+	deploymentLister            appsv1listers.DeploymentLister
+	triggerAuthenticationLister kedalisters.TriggerAuthenticationLister
 
 	ingressImage              string
 	ingressServiceAccountName string
@@ -107,8 +115,9 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *v1beta1.Broker) pkgre
 	b.Status.ObservedGeneration = b.Generation
 
 	// 1. RabbitMQ Exchange
-	// 2. Ingress Deployment.
-	// 3. K8s Service that points to the Ingress Deployment.
+	// 2. Ingress Deployment
+	// 3. K8s Service that points to the Ingress Deployment
+	// 4. KEDA TriggerAuthentication to be used by ScaledObjects
 
 	rabbitmqURL, err := r.rabbitmqURL(ctx, b)
 	if err != nil {
@@ -145,6 +154,13 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *v1beta1.Broker) pkgre
 		Scheme: "http",
 		Host:   names.ServiceHostName(ingressEndpoints.GetName(), ingressEndpoints.GetNamespace()),
 	})
+
+	_, err = r.reconcileScaleTriggerAuthentication(ctx, b)
+	if err != nil {
+		logging.FromContext(ctx).Error("Problem creating TriggerAuthentication", zap.Error(err))
+		b.Status.MarkIngressFailed("TriggerAuthenticationFailure", "%v", err)
+		return err
+	}
 
 	// So, at this point the Broker is ready and everything should be solid
 	// for the triggers to act upon.
@@ -223,6 +239,7 @@ func (r *Reconciler) reconcileIngressDeployment(ctx context.Context, b *v1beta1.
 		Broker:             b,
 		Image:              r.ingressImage,
 		RabbitMQSecretName: secret.Name,
+		BrokerUrlSecretKey: BrokerUrlSecretKey,
 	})
 	return r.reconcileDeployment(ctx, expected)
 }
@@ -240,6 +257,42 @@ func brokerLabels(name string) map[string]string {
 	}
 }
 */
+
+func (r *Reconciler) reconcileScaleTriggerAuthentication(ctx context.Context, b *v1beta1.Broker) (*kedav1alpha1.TriggerAuthentication, error) {
+	secret, err := r.getRabbitmqSecret(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+	namespace := b.Namespace
+	triggerAuthentication := resources.MakeTriggerAuthentication(&resources.TriggerAuthenticationArgs{
+		Broker:     b,
+		SecretName: secret.Name,
+		SecretKey:  BrokerUrlSecretKey,
+	})
+
+	current, err := r.triggerAuthenticationLister.TriggerAuthentications(namespace).Get(triggerAuthentication.Name)
+	if apierrs.IsNotFound(err) {
+		_, err = r.kedaClientset.KedaV1alpha1().TriggerAuthentications(namespace).Create(triggerAuthentication)
+		if err != nil {
+			return nil, err
+		}
+		return triggerAuthentication, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !equality.Semantic.DeepDerivative(triggerAuthentication.Spec, triggerAuthentication.Spec) {
+		// Don't modify the informers copy.
+		desired := current.DeepCopy()
+		desired.Spec = triggerAuthentication.Spec
+		_, err = r.kedaClientset.KedaV1alpha1().TriggerAuthentications(namespace).Update(desired)
+		if err != nil {
+			return nil, err
+		}
+		return desired, nil
+	}
+	return current, nil
+}
 
 func (r *Reconciler) getRabbitmqSecret(ctx context.Context, b *v1beta1.Broker) (*corev1.Secret, error) {
 	if b.Spec.Config != nil {
@@ -260,30 +313,14 @@ func (r *Reconciler) getRabbitmqSecret(ctx context.Context, b *v1beta1.Broker) (
 	return nil, errors.New("Broker.Spec.Config is required")
 }
 
-func (r *Reconciler) getRabbitmqSecretData(ctx context.Context, s *corev1.Secret, key string) (string, error) {
-	val := s.Data[key]
-	if val == nil {
-		return "", fmt.Errorf("Secret missing key %s", key)
-	}
-	return string(val), nil
-}
-
 func (r *Reconciler) rabbitmqURL(ctx context.Context, b *v1beta1.Broker) (string, error) {
 	s, err := r.getRabbitmqSecret(ctx, b)
 	if err != nil {
 		return "", err
 	}
-	host, err := r.getRabbitmqSecretData(ctx, s, "host")
-	if err != nil {
-		return "", err
+	val := s.Data[BrokerUrlSecretKey]
+	if val == nil {
+		return "", fmt.Errorf("Secret missing key %s", BrokerUrlSecretKey)
 	}
-	username, err := r.getRabbitmqSecretData(ctx, s, "username")
-	if err != nil {
-		return "", err
-	}
-	password, err := r.getRabbitmqSecretData(ctx, s, "password")
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("amqp://%s:%s@%s:5672", username, password, host), nil
+	return string(val), nil
 }
