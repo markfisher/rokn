@@ -26,11 +26,11 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// +kubebuilder:object:root=true
-
-// TriggerAuthentication defines how a trigger can authenticate
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 type TriggerAuthentication struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -75,7 +75,7 @@ type AuthEnvironment struct {
 	ContainerName string `json:"containerName"`
 }
 
-// +kubebuilder:object:root=true
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // TriggerAuthenticationList contains a list of TriggerAuthentication
 type TriggerAuthenticationList struct {
@@ -85,6 +85,6 @@ type TriggerAuthenticationList struct {
 	Items []TriggerAuthentication `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&TriggerAuthentication{}, &TriggerAuthenticationList{})
+func (t *TriggerAuthentication) GetGroupVersionKind() schema.GroupVersionKind {
+	return SchemeGroupVersion.WithKind("TriggerAuthentication")
 }

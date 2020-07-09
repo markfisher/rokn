@@ -27,11 +27,11 @@ package v1alpha1
 import (
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// +kubebuilder:object:root=true
-
-// ScaledObject is a specification for a ScaledObject resource
+// +genclient
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 type ScaledObject struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -81,7 +81,7 @@ type ScaledObjectStatus struct {
 	ExternalMetricNames []string     `json:"externalMetricNames,omitempty"`
 }
 
-// +kubebuilder:object:root=true
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // ScaledObjectList is a list of ScaledObject resources
 type ScaledObjectList struct {
@@ -91,6 +91,6 @@ type ScaledObjectList struct {
 	Items []ScaledObject `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&ScaledObject{}, &ScaledObjectList{})
+func (c *ScaledObject) GetGroupVersionKind() schema.GroupVersionKind {
+	return SchemeGroupVersion.WithKind("ScaledObject")
 }

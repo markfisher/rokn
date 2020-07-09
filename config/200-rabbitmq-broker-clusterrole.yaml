@@ -38,3 +38,15 @@ rules:
     - "delete"
     - "patch"
     - "watch"
+  - apiGroups:
+    - keda.k8s.io
+    resources:
+    - scaledobjects
+    verbs:
+    - "get"
+    - "list"
+    - "create"
+    - "update"
+    - "delete"
+    - "patch"
+    - "watch"

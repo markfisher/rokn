@@ -49,6 +49,7 @@ type DispatcherArgs struct {
 
 // MakeDispatcherDeployment creates the in-memory representation of the Broker's Dispatcher Deployment.
 func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
+	zero := int32(0)
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: args.Trigger.Namespace,
@@ -59,6 +60,7 @@ func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
 			Labels: DispatcherLabels(args.Trigger.Spec.Broker),
 		},
 		Spec: appsv1.DeploymentSpec{
+			Replicas: &zero,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: DispatcherLabels(args.Trigger.Spec.Broker),
 			},
@@ -71,6 +73,14 @@ func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
 					Containers: []corev1.Container{{
 						Name:  dispatcherContainerName,
 						Image: args.Image,
+						// used by KEDA scaler:
+						EnvFrom: []corev1.EnvFromSource{{
+							SecretRef: &corev1.SecretEnvSource{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: "rabbitmq-scale-trigger-secret",
+								},
+							},
+						}},
 						Env: []corev1.EnvVar{{
 							Name:  system.NamespaceEnvKey,
 							Value: system.Namespace(),

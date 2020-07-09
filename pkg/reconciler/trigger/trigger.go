@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/streadway/amqp"
 
 	"go.uber.org/zap"
@@ -33,6 +34,7 @@ import (
 	appsv1listers "k8s.io/client-go/listers/apps/v1"
 	"knative.dev/pkg/apis"
 	duckv1 "knative.dev/pkg/apis/duck/v1"
+	"knative.dev/pkg/kmeta"
 	"knative.dev/pkg/logging"
 
 	"github.com/markfisher/rokn/pkg/reconciler/trigger/resources"
@@ -45,23 +47,28 @@ import (
 	pkgreconciler "knative.dev/pkg/reconciler"
 	"knative.dev/pkg/resolver"
 
+	kedaclientset "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/clientset/versioned"
+	kedalisters "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/listers/keda/v1alpha1"
 	kedav1alpha1 "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/v1alpha1"
 )
 
 const (
 	// Name of the corev1.Events emitted from the Trigger reconciliation process.
-	triggerReconciled = "TriggerReconciled"
+	triggerReconciled      = "TriggerReconciled"
+	scaleTriggerSecretName = "rabbitmq-scale-trigger-secret"
 )
 
 type Reconciler struct {
+	kedaClientset     kedaclientset.Interface
 	eventingClientSet clientset.Interface
 	dynamicClientSet  dynamic.Interface
 	kubeClientSet     kubernetes.Interface
 
 	// listers index properties about resources
-	deploymentLister appsv1listers.DeploymentLister
-	brokerLister     eventinglisters.BrokerLister
-	triggerLister    eventinglisters.TriggerLister
+	deploymentLister   appsv1listers.DeploymentLister
+	brokerLister       eventinglisters.BrokerLister
+	triggerLister      eventinglisters.TriggerLister
+	scaledObjectLister kedalisters.ScaledObjectLister
 
 	dispatcherImage              string
 	dispatcherServiceAccountName string
@@ -172,7 +179,14 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 		return err
 	}
 
-	return r.reconcileScaledObject(ctx, queue, deployment)
+	_, err = r.reconcileScaleTriggerSecret(ctx, rabbitmqURL, t)
+	if err != nil {
+		logging.FromContext(ctx).Error("Problem reconciling KEDA trigger Secret", zap.Error(err))
+		t.Status.MarkDependencyFailed("KedaTriggerSecretFailure", "%v", err)
+		return err
+	}
+
+	return r.reconcileScaledObject(ctx, queue, deployment, t)
 }
 
 func (r *Reconciler) FinalizeKind(ctx context.Context, t *v1beta1.Trigger) pkgreconciler.Event {
@@ -334,35 +348,104 @@ func (r *Reconciler) rabbitmqURL(ctx context.Context, t *v1beta1.Trigger) (strin
 	return fmt.Sprintf("amqp://%s:%s@%s:5672", s.Data["username"], s.Data["password"], s.Data["host"]), nil
 }
 
-func (r *Reconciler) reconcileScaledObject(ctx context.Context, queue *amqp.Queue, deployment *v1.Deployment) error {
+func (r *Reconciler) reconcileScaleTriggerSecret(ctx context.Context, rabbitmqURL string, t *v1beta1.Trigger) (*corev1.Secret, error) {
+	// TODO: move the object definition to the resources subpackage
+	triggerSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      scaleTriggerSecretName,
+			Namespace: t.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				*kmeta.NewControllerRef(t),
+			},
+		},
+		Data: map[string][]byte{
+			"RabbitMqBrokerUrl": []byte(rabbitmqURL),
+		},
+	}
+
+	current, err := r.kubeClientSet.CoreV1().Secrets(t.Namespace).Get(scaleTriggerSecretName, metav1.GetOptions{})
+	if apierrs.IsNotFound(err) {
+		_, err = r.kubeClientSet.CoreV1().Secrets(t.Namespace).Create(triggerSecret)
+		if err != nil {
+			return nil, err
+		}
+		return triggerSecret, nil
+	} else if err != nil {
+		return nil, err
+	} else if !equality.Semantic.DeepDerivative(triggerSecret.Data, current.Data) {
+		// Don't modify the informers copy.
+		desired := current.DeepCopy()
+		desired.Data = triggerSecret.Data
+		_, err = r.kubeClientSet.CoreV1().Secrets(desired.Namespace).Update(desired)
+		if err != nil {
+			return nil, err
+		}
+		return desired, nil
+	}
+	return current, nil
+}
+
+func (r *Reconciler) reconcileScaledObject(ctx context.Context, queue *amqp.Queue, deployment *v1.Deployment, trigger *v1beta1.Trigger) error {
+	// TODO: move the object definition to the resources subpackage
 	zero := int32(0)
 	one := int32(1)
-	maxReplicas := maxReplicasFor(queue)
-	desiredScaledObject := &kedav1alpha1.ScaledObject{
+	five := int32(5)
+	thirty := int32(30)
+	// TODO: cannot be zero
+	// maxReplicas := maxReplicasFor(queue)
+	so := &kedav1alpha1.ScaledObject{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: fmt.Sprintf("%s-dispatcher-", deployment.Name),
-			Namespace:    deployment.Namespace,
-			Labels:       deployment.Labels,
+			Name:      fmt.Sprintf("%s", deployment.Name),
+			Namespace: deployment.Namespace,
+			Labels:    deployment.Labels,
+			OwnerReferences: []metav1.OwnerReference{
+				*kmeta.NewControllerRef(trigger),
+			},
 		},
 		Spec: kedav1alpha1.ScaledObjectSpec{
 			ScaleTargetRef: &kedav1alpha1.ObjectReference{
 				DeploymentName: deployment.Name,
 			},
-			PollingInterval: &one,
+			PollingInterval: &five,   // seconds
+			CooldownPeriod:  &thirty, // seconds
+			MinReplicaCount: &zero,
+			MaxReplicaCount: &one, // for now
 			Triggers: []kedav1alpha1.ScaleTriggers{
 				{
 					Type: "rabbitmq",
 					Metadata: map[string]string{
-						// TODO
+						"queueName":   queue.Name,
+						"host":        "RabbitMqBrokerUrl",
+						"queueLength": "1",
 					},
+					// TODO: (don't think this is supported yet for the RabbitMQ scaler)
+					// AuthenticationRef: &kedav1alpha1.ScaledObjectAuthRef{
+					// 	 Name: triggerAuthenticationName,
+					// },
 				},
 			},
-			MinReplicaCount: &zero,
-			MaxReplicaCount: &maxReplicas,
 		},
 	}
-	// TODO: replace Println with reconciliation logic
-	fmt.Println(desiredScaledObject)
+
+	current, err := r.scaledObjectLister.ScaledObjects(so.Namespace).Get(so.Name)
+	if apierrs.IsNotFound(err) {
+		_, err = r.kedaClientset.KedaV1alpha1().ScaledObjects(so.Namespace).Create(so)
+		if err != nil {
+			return err
+		}
+		return nil
+	} else if err != nil {
+		return err
+	} else if !equality.Semantic.DeepDerivative(so.Spec, current.Spec) {
+		// Don't modify the informers copy.
+		desired := current.DeepCopy()
+		desired.Spec = so.Spec
+		_, err = r.kedaClientset.KedaV1alpha1().ScaledObjects(desired.Namespace).Update(desired)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
 	return nil
 }
 
