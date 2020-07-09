@@ -20,6 +20,7 @@ import (
 	"context"
 	"log"
 
+	kedaclient "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/injection/client"
 	eventingclient "knative.dev/eventing/pkg/client/injection/client"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
 	"knative.dev/pkg/injection/clients/dynamicclient"
@@ -31,6 +32,7 @@ import (
 
 	"knative.dev/eventing/pkg/apis/eventing/v1beta1"
 
+	scaledobjectinformer "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/injection/informers/keda/v1alpha1/scaledobject"
 	brokerinformer "knative.dev/eventing/pkg/client/injection/informers/eventing/v1beta1/broker"
 	triggerinformer "knative.dev/eventing/pkg/client/injection/informers/eventing/v1beta1/trigger"
 	brokerreconciler "knative.dev/eventing/pkg/client/injection/reconciler/eventing/v1beta1/broker"
@@ -39,15 +41,11 @@ import (
 	"knative.dev/pkg/client/injection/ducks/duck/v1/addressable"
 	"knative.dev/pkg/client/injection/ducks/duck/v1/conditions"
 	deploymentinformer "knative.dev/pkg/client/injection/kube/informers/apps/v1/deployment"
+
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
 	"knative.dev/pkg/resolver"
-)
-
-const (
-	// ReconcilerName is the name of the reconciler
-	ReconcilerName = "Triggers"
 )
 
 type envConfig struct {
@@ -73,14 +71,17 @@ func NewController(
 	brokerInformer := brokerinformer.Get(ctx)
 	deploymentInformer := deploymentinformer.Get(ctx)
 	triggerInformer := triggerinformer.Get(ctx)
+	scaledObjectInformer := scaledobjectinformer.Get(ctx)
 
 	r := &Reconciler{
+		kedaClientset:                kedaclient.Get(ctx),
 		eventingClientSet:            eventingclient.Get(ctx),
 		dynamicClientSet:             dynamicclient.Get(ctx),
 		kubeClientSet:                kubeclient.Get(ctx),
 		deploymentLister:             deploymentInformer.Lister(),
 		brokerLister:                 brokerInformer.Lister(),
 		triggerLister:                triggerInformer.Lister(),
+		scaledObjectLister:           scaledObjectInformer.Lister(),
 		dispatcherImage:              env.DispatcherImage,
 		dispatcherServiceAccountName: env.DispatcherServiceAccount,
 	}

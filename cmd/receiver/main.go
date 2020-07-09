@@ -19,7 +19,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 
@@ -28,14 +27,12 @@ import (
 )
 
 func main() {
-	host := os.Getenv("RABBITMQ_HOST")
-	username := os.Getenv("RABBITMQ_USERNAME")
-	password := os.Getenv("RABBITMQ_PASSWORD")
 	queueName := os.Getenv("QUEUE_NAME")
 	brokerURL := os.Getenv("BROKER_URL")
+	brokerIngressURL := os.Getenv("BROKER_INGRESS_URL")
 	subscriberURL := os.Getenv("SUBSCRIBER")
-	url := fmt.Sprintf("amqp://%s:%s@%s:5672", username, password, host)
-	conn, err := amqp.Dial(url)
+
+	conn, err := amqp.Dial(brokerURL)
 	if err != nil {
 		log.Fatalf("failed to connect to RabbitMQ: %s", err)
 	}
@@ -95,7 +92,7 @@ func main() {
 				continue
 			}
 			if response != nil {
-				ctx = cloudevents.ContextWithTarget(context.Background(), brokerURL)
+				ctx = cloudevents.ContextWithTarget(context.Background(), brokerIngressURL)
 				if result := ceClient.Send(ctx, *response); !cloudevents.IsACK(result) {
 					d.Nack(false, true) // not multiple, do requeue
 				}

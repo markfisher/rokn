@@ -19,6 +19,8 @@ package resources
 import (
 	"fmt"
 	"io/ioutil"
+	"net"
+	"net/url"
 	"reflect"
 
 	rabbithole "github.com/michaelklishin/rabbit-hole"
@@ -34,16 +36,23 @@ const (
 type BindingArgs struct {
 	Trigger                *eventingv1beta1.Trigger
 	RoutingKey             string
-	RabbitmqHost           string
-	RabbitmqUsername       string
-	RabbitmqPassword       string
+	BrokerURL              string
 	RabbitmqManagementPort int
 }
 
 // MakeBinding declares the Binding from the Broker's Exchange to the Trigger's Queue.
 func MakeBinding(args *BindingArgs) error {
-	adminURL := fmt.Sprintf("http://%s:%d", args.RabbitmqHost, managementPort(args))
-	c, err := rabbithole.NewClient(adminURL, args.RabbitmqUsername, args.RabbitmqPassword)
+	url, err := url.Parse(args.BrokerURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse Broker URL: %v", err)
+	}
+	host, _, err := net.SplitHostPort(url.Host)
+	if err != nil {
+		return fmt.Errorf("failed to resolve host from Broker URL: %v", err)
+	}
+	adminURL := fmt.Sprintf("http://%s:%d", host, managementPort(args))
+	p, _ := url.User.Password()
+	c, err := rabbithole.NewClient(adminURL, url.User.Username(), p)
 	if err != nil {
 		return fmt.Errorf("Failed to create RabbitMQ Admin Client: %v", err)
 	}

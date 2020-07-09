@@ -21,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/streadway/amqp"
+
 	"go.uber.org/zap"
 	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -34,6 +36,7 @@ import (
 	duckv1 "knative.dev/pkg/apis/duck/v1"
 	"knative.dev/pkg/logging"
 
+	"github.com/markfisher/rokn/pkg/reconciler/broker"
 	"github.com/markfisher/rokn/pkg/reconciler/trigger/resources"
 	"knative.dev/eventing/pkg/apis/eventing/v1beta1"
 	clientset "knative.dev/eventing/pkg/client/clientset/versioned"
@@ -43,6 +46,9 @@ import (
 	"knative.dev/eventing/pkg/duck"
 	pkgreconciler "knative.dev/pkg/reconciler"
 	"knative.dev/pkg/resolver"
+
+	kedaclientset "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/clientset/versioned"
+	kedalisters "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/listers/keda/v1alpha1"
 )
 
 const (
@@ -51,14 +57,16 @@ const (
 )
 
 type Reconciler struct {
+	kedaClientset     kedaclientset.Interface
 	eventingClientSet clientset.Interface
 	dynamicClientSet  dynamic.Interface
 	kubeClientSet     kubernetes.Interface
 
 	// listers index properties about resources
-	deploymentLister appsv1listers.DeploymentLister
-	brokerLister     eventinglisters.BrokerLister
-	triggerLister    eventinglisters.TriggerLister
+	deploymentLister   appsv1listers.DeploymentLister
+	brokerLister       eventinglisters.BrokerLister
+	triggerLister      eventinglisters.TriggerLister
+	scaledObjectLister kedalisters.ScaledObjectLister
 
 	dispatcherImage              string
 	dispatcherServiceAccountName string
@@ -103,14 +111,15 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 	t.Status.ObservedGeneration = t.Generation
 
 	// 1. RabbitMQ Queue
-	// 2. RabbitMQ Binding.
-	// 3. Dispatcher Deployment for Subscriber.
+	// 2. RabbitMQ Binding
+	// 3. Dispatcher Deployment for Subscriber
+	// 4. KEDA ScaledObject
 	rabbitmqURL, err := r.rabbitmqURL(ctx, t)
 	if err != nil {
 		return err
 	}
 
-	_, err = resources.DeclareQueue(&resources.QueueArgs{
+	queue, err := resources.DeclareQueue(&resources.QueueArgs{
 		Trigger:     t,
 		RabbitmqURL: rabbitmqURL,
 	})
@@ -120,17 +129,10 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 		return err
 	}
 
-	secret, err := r.getRabbitmqSecret(ctx, t)
-	if err != nil {
-		return err
-	}
-
 	err = resources.MakeBinding(&resources.BindingArgs{
-		Trigger:          t,
-		RoutingKey:       "",
-		RabbitmqHost:     string(secret.Data["host"]),
-		RabbitmqUsername: string(secret.Data["username"]),
-		RabbitmqPassword: string(secret.Data["password"]),
+		Trigger:    t,
+		RoutingKey: "",
+		BrokerURL:  rabbitmqURL,
 	})
 	if err != nil {
 		logging.FromContext(ctx).Error("Problem declaring Trigger Queue Binding", zap.Error(err))
@@ -162,13 +164,14 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 		},
 	)
 
-	if err := r.reconcileDispatcherDeployment(ctx, t, subscriberURI); err != nil {
+	deployment, err := r.reconcileDispatcherDeployment(ctx, t, subscriberURI)
+	if err != nil {
 		logging.FromContext(ctx).Error("Problem reconciling dispatcher Deployment", zap.Error(err))
 		t.Status.MarkDependencyFailed("DeploymentFailure", "%v", err)
 		return err
 	}
 
-	return nil
+	return r.reconcileScaledObject(queue, deployment, t)
 }
 
 func (r *Reconciler) FinalizeKind(ctx context.Context, t *v1beta1.Trigger) pkgreconciler.Event {
@@ -188,36 +191,38 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, t *v1beta1.Trigger) pkgre
 }
 
 // reconcileDeployment reconciles the K8s Deployment 'd'.
-func (r *Reconciler) reconcileDeployment(ctx context.Context, d *v1.Deployment) error {
+func (r *Reconciler) reconcileDeployment(ctx context.Context, d *v1.Deployment) (*v1.Deployment, error) {
 	current, err := r.deploymentLister.Deployments(d.Namespace).Get(d.Name)
 	if apierrs.IsNotFound(err) {
 		_, err = r.kubeClientSet.AppsV1().Deployments(d.Namespace).Create(d)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		return d, nil
 	} else if err != nil {
-		return err
+		return nil, err
 	} else if !equality.Semantic.DeepDerivative(d.Spec, current.Spec) {
 		// Don't modify the informers copy.
 		desired := current.DeepCopy()
 		desired.Spec = d.Spec
 		_, err = r.kubeClientSet.AppsV1().Deployments(desired.Namespace).Update(desired)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		return desired, nil
 	}
-	return nil
+	return current, nil
 }
 
 //reconcileDispatcherDeployment reconciles Trigger's dispatcher deployment.
-func (r *Reconciler) reconcileDispatcherDeployment(ctx context.Context, t *v1beta1.Trigger, sub *apis.URL) error {
+func (r *Reconciler) reconcileDispatcherDeployment(ctx context.Context, t *v1beta1.Trigger, sub *apis.URL) (*v1.Deployment, error) {
 	rabbitmqSecret, err := r.getRabbitmqSecret(ctx, t)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	broker, err := r.brokerLister.Brokers(t.Namespace).Get(t.Spec.Broker)
+	b, err := r.brokerLister.Brokers(t.Namespace).Get(t.Spec.Broker)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	expected := resources.MakeDispatcherDeployment(&resources.DispatcherArgs{
 		Trigger: t,
@@ -225,7 +230,8 @@ func (r *Reconciler) reconcileDispatcherDeployment(ctx context.Context, t *v1bet
 		//ServiceAccountName string
 		RabbitMQSecretName: rabbitmqSecret.Name,
 		QueueName:          t.Name,
-		BrokerURL:          broker.Status.Address.URL,
+		BrokerUrlSecretKey: broker.BrokerUrlSecretKey,
+		BrokerIngressURL:   b.Status.Address.URL,
 		Subscriber:         sub,
 	})
 	return r.reconcileDeployment(ctx, expected)
@@ -325,5 +331,36 @@ func (r *Reconciler) rabbitmqURL(ctx context.Context, t *v1beta1.Trigger) (strin
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("amqp://%s:%s@%s:5672", s.Data["username"], s.Data["password"], s.Data["host"]), nil
+	val := s.Data[broker.BrokerUrlSecretKey]
+	if val == nil {
+		return "", fmt.Errorf("Secret missing key %s", broker.BrokerUrlSecretKey)
+	}
+	return string(val), nil
+}
+
+func (r *Reconciler) reconcileScaledObject(queue *amqp.Queue, deployment *v1.Deployment, trigger *v1beta1.Trigger) error {
+	so := resources.MakeDispatcherScaledObject(&resources.DispatcherScaledObjectArgs{
+		DispatcherDeployment:      deployment,
+		QueueName:                 queue.Name,
+		Trigger:                   trigger,
+		BrokerUrlSecretKey:        broker.BrokerUrlSecretKey,
+		TriggerAuthenticationName: fmt.Sprintf("%s-trigger-auth", trigger.Spec.Broker),
+	})
+
+	current, err := r.scaledObjectLister.ScaledObjects(so.Namespace).Get(so.Name)
+	if apierrs.IsNotFound(err) {
+		_, err = r.kedaClientset.KedaV1alpha1().ScaledObjects(so.Namespace).Create(so)
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepDerivative(so.Spec, current.Spec) {
+		// Don't modify the informers copy.
+		desired := current.DeepCopy()
+		desired.Spec = so.Spec
+		_, err = r.kedaClientset.KedaV1alpha1().ScaledObjects(desired.Namespace).Update(desired)
+		return err
+	}
+	return nil
 }

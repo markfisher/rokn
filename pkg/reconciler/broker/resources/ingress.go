@@ -39,8 +39,8 @@ type IngressArgs struct {
 	Broker *eventingv1beta1.Broker
 	Image  string
 	//ServiceAccountName string
-	RabbitMQHost       string
 	RabbitMQSecretName string
+	BrokerUrlSecretKey string
 }
 
 // MakeIngress creates the in-memory representation of the Broker's ingress Deployment.
@@ -81,33 +81,13 @@ func MakeIngressDeployment(args *IngressArgs) *appsv1.Deployment {
 							Name:  system.NamespaceEnvKey,
 							Value: system.Namespace(),
 						}, {
-							Name: "RABBITMQ_HOST",
+							Name: "BROKER_URL",
 							ValueFrom: &corev1.EnvVarSource{
 								SecretKeyRef: &corev1.SecretKeySelector{
 									LocalObjectReference: corev1.LocalObjectReference{
 										Name: args.RabbitMQSecretName,
 									},
-									Key: "host",
-								},
-							},
-						}, {
-							Name: "RABBITMQ_USERNAME",
-							ValueFrom: &corev1.EnvVarSource{
-								SecretKeyRef: &corev1.SecretKeySelector{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: args.RabbitMQSecretName,
-									},
-									Key: "username",
-								},
-							},
-						}, {
-							Name: "RABBITMQ_PASSWORD",
-							ValueFrom: &corev1.EnvVarSource{
-								SecretKeyRef: &corev1.SecretKeySelector{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: args.RabbitMQSecretName,
-									},
-									Key: "password",
+									Key: args.BrokerUrlSecretKey,
 								},
 							},
 						}, {
