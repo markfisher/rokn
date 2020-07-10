@@ -42,6 +42,7 @@ rules:
     - keda.k8s.io
     resources:
     - scaledobjects
+    - triggerauthentications
     verbs:
     - "get"
     - "list"

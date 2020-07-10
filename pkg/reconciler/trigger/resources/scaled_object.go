@@ -15,6 +15,31 @@ type DispatcherScaledObjectArgs struct {
 	Trigger              *v1beta1.Trigger
 }
 
+type RabbitTriggerAuthenticationArgs struct {
+	Namespace string
+}
+
+const TriggerAuthenticationName = "rabbit-trigger-authentication"
+
+func MakeRabbitTriggerAuthentication(args *RabbitTriggerAuthenticationArgs) *kedav1alpha1.TriggerAuthentication {
+	return &kedav1alpha1.TriggerAuthentication{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: args.Namespace,
+			Name:      TriggerAuthenticationName,
+		},
+		Spec: kedav1alpha1.TriggerAuthenticationSpec{
+			SecretTargetRef: []kedav1alpha1.AuthSecretTargetRef{
+				{
+					Parameter: "host",
+					Name:      ScaleTriggerSecretName,
+					Key:       RabbitMqBrokerUrlKeyName,
+				},
+			},
+			Env: []kedav1alpha1.AuthEnvironment{},
+		},
+	}
+}
+
 func MakeDispatcherScaledObject(args *DispatcherScaledObjectArgs) *kedav1alpha1.ScaledObject {
 	zero := int32(0)
 	one := int32(1)
@@ -47,10 +72,9 @@ func MakeDispatcherScaledObject(args *DispatcherScaledObjectArgs) *kedav1alpha1.
 						"host":        RabbitMqBrokerUrlKeyName,
 						"queueLength": "1",
 					},
-					// TODO: (don't think this is supported yet for the RabbitMQ scaler)
-					// AuthenticationRef: &kedav1alpha1.ScaledObjectAuthRef{
-					// 	 Name: triggerAuthenticationName,
-					// },
+					AuthenticationRef: &kedav1alpha1.ScaledObjectAuthRef{
+						Name: TriggerAuthenticationName,
+					},
 				},
 			},
 		},

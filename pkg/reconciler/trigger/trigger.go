@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	kedav1alpha1 "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/v1alpha1"
 
 	"github.com/streadway/amqp"
 
@@ -52,7 +53,7 @@ import (
 
 const (
 	// Name of the corev1.Events emitted from the Trigger reconciliation process.
-	triggerReconciled      = "TriggerReconciled"
+	triggerReconciled = "TriggerReconciled"
 )
 
 type Reconciler struct {
@@ -66,6 +67,7 @@ type Reconciler struct {
 	brokerLister       eventinglisters.BrokerLister
 	triggerLister      eventinglisters.TriggerLister
 	scaledObjectLister kedalisters.ScaledObjectLister
+	triggerAuthenticationLister kedalisters.TriggerAuthenticationLister
 
 	dispatcherImage              string
 	dispatcherServiceAccountName string
@@ -176,10 +178,15 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 		return err
 	}
 
-	_, err = r.reconcileScaleTriggerSecret(rabbitmqURL, t)
-	if err != nil {
+	if _, err = r.reconcileScaleTriggerSecret(rabbitmqURL, t); err != nil {
 		logging.FromContext(ctx).Error("Problem reconciling KEDA trigger Secret", zap.Error(err))
 		t.Status.MarkDependencyFailed("KedaTriggerSecretFailure", "%v", err)
+		return err
+	}
+
+	if _, err = r.reconcileScaleTriggerAuthentication(deployment); err != nil {
+		logging.FromContext(ctx).Error("Problem reconciling KEDA trigger authentication", zap.Error(err))
+		t.Status.MarkDependencyFailed("KedaTriggerAuthenticationFailure", "%v", err)
 		return err
 	}
 
@@ -358,13 +365,45 @@ func (r *Reconciler) reconcileScaleTriggerSecret(rabbitmqURL string, t *v1beta1.
 			return nil, err
 		}
 		return triggerSecret, nil
-	} else if err != nil {
+	}
+	if err != nil {
 		return nil, err
-	} else if !equality.Semantic.DeepDerivative(triggerSecret.Data, current.Data) {
+	}
+	if !equality.Semantic.DeepDerivative(triggerSecret.Data, current.Data) {
 		// Don't modify the informers copy.
 		desired := current.DeepCopy()
 		desired.Data = triggerSecret.Data
 		_, err = r.kubeClientSet.CoreV1().Secrets(desired.Namespace).Update(desired)
+		if err != nil {
+			return nil, err
+		}
+		return desired, nil
+	}
+	return current, nil
+}
+
+func (r *Reconciler) reconcileScaleTriggerAuthentication(deployment *v1.Deployment) (*kedav1alpha1.TriggerAuthentication, error) {
+	namespace := deployment.Namespace
+	triggerAuthentication := resources.MakeRabbitTriggerAuthentication(&resources.RabbitTriggerAuthenticationArgs{
+		Namespace: namespace,
+	})
+
+	current, err := r.triggerAuthenticationLister.TriggerAuthentications(namespace).Get(resources.TriggerAuthenticationName)
+	if apierrs.IsNotFound(err) {
+		_, err = r.kedaClientset.KedaV1alpha1().TriggerAuthentications(namespace).Create(triggerAuthentication)
+		if err != nil {
+			return nil, err
+		}
+		return triggerAuthentication, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !equality.Semantic.DeepDerivative(triggerAuthentication.Spec, triggerAuthentication.Spec) {
+		// Don't modify the informers copy.
+		desired := current.DeepCopy()
+		desired.Spec = triggerAuthentication.Spec
+		_, err = r.kedaClientset.KedaV1alpha1().TriggerAuthentications(namespace).Update(desired)
 		if err != nil {
 			return nil, err
 		}

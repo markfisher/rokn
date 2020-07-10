@@ -73,14 +73,6 @@ func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
 					Containers: []corev1.Container{{
 						Name:  dispatcherContainerName,
 						Image: args.Image,
-						// used by KEDA scaler:
-						EnvFrom: []corev1.EnvFromSource{{
-							SecretRef: &corev1.SecretEnvSource{
-								LocalObjectReference: corev1.LocalObjectReference{
-									Name: ScaleTriggerSecretName,
-								},
-							},
-						}},
 						Env: []corev1.EnvVar{{
 							Name:  system.NamespaceEnvKey,
 							Value: system.Namespace(),

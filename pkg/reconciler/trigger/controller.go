@@ -33,6 +33,7 @@ import (
 	"knative.dev/eventing/pkg/apis/eventing/v1beta1"
 
 	scaledobjectinformer "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/injection/informers/keda/v1alpha1/scaledobject"
+	triggerauthenticationinformer "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/injection/informers/keda/v1alpha1/triggerauthentication"
 	brokerinformer "knative.dev/eventing/pkg/client/injection/informers/eventing/v1beta1/broker"
 	triggerinformer "knative.dev/eventing/pkg/client/injection/informers/eventing/v1beta1/trigger"
 	brokerreconciler "knative.dev/eventing/pkg/client/injection/reconciler/eventing/v1beta1/broker"
@@ -72,6 +73,7 @@ func NewController(
 	deploymentInformer := deploymentinformer.Get(ctx)
 	triggerInformer := triggerinformer.Get(ctx)
 	scaledObjectInformer := scaledobjectinformer.Get(ctx)
+	triggerAuthenticationInformer := triggerauthenticationinformer.Get(ctx)
 
 	r := &Reconciler{
 		kedaClientset:                kedaclient.Get(ctx),
@@ -82,6 +84,7 @@ func NewController(
 		brokerLister:                 brokerInformer.Lister(),
 		triggerLister:                triggerInformer.Lister(),
 		scaledObjectLister:           scaledObjectInformer.Lister(),
+		triggerAuthenticationLister:  triggerAuthenticationInformer.Lister(),
 		dispatcherImage:              env.DispatcherImage,
 		dispatcherServiceAccountName: env.DispatcherServiceAccount,
 	}
