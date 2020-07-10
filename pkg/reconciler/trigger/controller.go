@@ -48,11 +48,6 @@ import (
 	"knative.dev/pkg/resolver"
 )
 
-const (
-	// ReconcilerName is the name of the reconciler
-	ReconcilerName = "Triggers"
-)
-
 type envConfig struct {
 	DispatcherImage          string `envconfig:"BROKER_DISPATCHER_IMAGE" required:"true"`
 	DispatcherServiceAccount string `envconfig:"BROKER_DISPATCHER_SERVICE_ACCOUNT" required:"true"`

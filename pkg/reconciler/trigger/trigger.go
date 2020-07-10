@@ -34,7 +34,6 @@ import (
 	appsv1listers "k8s.io/client-go/listers/apps/v1"
 	"knative.dev/pkg/apis"
 	duckv1 "knative.dev/pkg/apis/duck/v1"
-	"knative.dev/pkg/kmeta"
 	"knative.dev/pkg/logging"
 
 	"github.com/markfisher/rokn/pkg/reconciler/trigger/resources"
@@ -49,13 +48,11 @@ import (
 
 	kedaclientset "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/clientset/versioned"
 	kedalisters "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/listers/keda/v1alpha1"
-	kedav1alpha1 "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/v1alpha1"
 )
 
 const (
 	// Name of the corev1.Events emitted from the Trigger reconciliation process.
 	triggerReconciled      = "TriggerReconciled"
-	scaleTriggerSecretName = "rabbitmq-scale-trigger-secret"
 )
 
 type Reconciler struct {
@@ -179,14 +176,14 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 		return err
 	}
 
-	_, err = r.reconcileScaleTriggerSecret(ctx, rabbitmqURL, t)
+	_, err = r.reconcileScaleTriggerSecret(rabbitmqURL, t)
 	if err != nil {
 		logging.FromContext(ctx).Error("Problem reconciling KEDA trigger Secret", zap.Error(err))
 		t.Status.MarkDependencyFailed("KedaTriggerSecretFailure", "%v", err)
 		return err
 	}
 
-	return r.reconcileScaledObject(ctx, queue, deployment, t)
+	return r.reconcileScaledObject(queue, deployment, t)
 }
 
 func (r *Reconciler) FinalizeKind(ctx context.Context, t *v1beta1.Trigger) pkgreconciler.Event {
@@ -348,22 +345,13 @@ func (r *Reconciler) rabbitmqURL(ctx context.Context, t *v1beta1.Trigger) (strin
 	return fmt.Sprintf("amqp://%s:%s@%s:5672", s.Data["username"], s.Data["password"], s.Data["host"]), nil
 }
 
-func (r *Reconciler) reconcileScaleTriggerSecret(ctx context.Context, rabbitmqURL string, t *v1beta1.Trigger) (*corev1.Secret, error) {
-	// TODO: move the object definition to the resources subpackage
-	triggerSecret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      scaleTriggerSecretName,
-			Namespace: t.Namespace,
-			OwnerReferences: []metav1.OwnerReference{
-				*kmeta.NewControllerRef(t),
-			},
-		},
-		Data: map[string][]byte{
-			"RabbitMqBrokerUrl": []byte(rabbitmqURL),
-		},
-	}
+func (r *Reconciler) reconcileScaleTriggerSecret(rabbitmqURL string, t *v1beta1.Trigger) (*corev1.Secret, error) {
+	triggerSecret := resources.MakeTriggerSecret(&resources.TriggerSecretArgs{
+		BrokerUrl: rabbitmqURL,
+		Trigger:   t,
+	})
 
-	current, err := r.kubeClientSet.CoreV1().Secrets(t.Namespace).Get(scaleTriggerSecretName, metav1.GetOptions{})
+	current, err := r.kubeClientSet.CoreV1().Secrets(t.Namespace).Get(resources.ScaleTriggerSecretName, metav1.GetOptions{})
 	if apierrs.IsNotFound(err) {
 		_, err = r.kubeClientSet.CoreV1().Secrets(t.Namespace).Create(triggerSecret)
 		if err != nil {
@@ -385,73 +373,27 @@ func (r *Reconciler) reconcileScaleTriggerSecret(ctx context.Context, rabbitmqUR
 	return current, nil
 }
 
-func (r *Reconciler) reconcileScaledObject(ctx context.Context, queue *amqp.Queue, deployment *v1.Deployment, trigger *v1beta1.Trigger) error {
-	// TODO: move the object definition to the resources subpackage
-	zero := int32(0)
-	one := int32(1)
-	five := int32(5)
-	thirty := int32(30)
-	// TODO: cannot be zero
-	// maxReplicas := maxReplicasFor(queue)
-	so := &kedav1alpha1.ScaledObject{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s", deployment.Name),
-			Namespace: deployment.Namespace,
-			Labels:    deployment.Labels,
-			OwnerReferences: []metav1.OwnerReference{
-				*kmeta.NewControllerRef(trigger),
-			},
-		},
-		Spec: kedav1alpha1.ScaledObjectSpec{
-			ScaleTargetRef: &kedav1alpha1.ObjectReference{
-				DeploymentName: deployment.Name,
-			},
-			PollingInterval: &five,   // seconds
-			CooldownPeriod:  &thirty, // seconds
-			MinReplicaCount: &zero,
-			MaxReplicaCount: &one, // for now
-			Triggers: []kedav1alpha1.ScaleTriggers{
-				{
-					Type: "rabbitmq",
-					Metadata: map[string]string{
-						"queueName":   queue.Name,
-						"host":        "RabbitMqBrokerUrl",
-						"queueLength": "1",
-					},
-					// TODO: (don't think this is supported yet for the RabbitMQ scaler)
-					// AuthenticationRef: &kedav1alpha1.ScaledObjectAuthRef{
-					// 	 Name: triggerAuthenticationName,
-					// },
-				},
-			},
-		},
-	}
+func (r *Reconciler) reconcileScaledObject(queue *amqp.Queue, deployment *v1.Deployment, trigger *v1beta1.Trigger) error {
+	so := resources.MakeDispatcherScaledObject(&resources.DispatcherScaledObjectArgs{
+		DispatcherDeployment: deployment,
+		QueueName:            queue.Name,
+		Trigger:              trigger,
+	})
 
 	current, err := r.scaledObjectLister.ScaledObjects(so.Namespace).Get(so.Name)
 	if apierrs.IsNotFound(err) {
 		_, err = r.kedaClientset.KedaV1alpha1().ScaledObjects(so.Namespace).Create(so)
-		if err != nil {
-			return err
-		}
-		return nil
-	} else if err != nil {
 		return err
-	} else if !equality.Semantic.DeepDerivative(so.Spec, current.Spec) {
+	}
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepDerivative(so.Spec, current.Spec) {
 		// Don't modify the informers copy.
 		desired := current.DeepCopy()
 		desired.Spec = so.Spec
 		_, err = r.kedaClientset.KedaV1alpha1().ScaledObjects(desired.Namespace).Update(desired)
-		if err != nil {
-			return err
-		}
-		return nil
+		return err
 	}
 	return nil
-}
-
-func maxReplicasFor(queue *amqp.Queue) int32 {
-	if queue.Messages > 0 {
-		return 1
-	}
-	return 0
 }

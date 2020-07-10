@@ -77,7 +77,7 @@ func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
 						EnvFrom: []corev1.EnvFromSource{{
 							SecretRef: &corev1.SecretEnvSource{
 								LocalObjectReference: corev1.LocalObjectReference{
-									Name: "rabbitmq-scale-trigger-secret",
+									Name: ScaleTriggerSecretName,
 								},
 							},
 						}},
