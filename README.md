@@ -1,5 +1,7 @@
 # RabbitMQ Knative Eventing Broker
 
+## Prerequisites
+
 install Knative Serving and Eventing as documented [here](https://knative.dev/docs/install/any-kubernetes-cluster/)
 
 create a RabbitMQ cluster:
@@ -18,10 +20,16 @@ kubectl create secret generic rabbitmq-broker-secret \
     --from-literal=password=$PASSWORD
 ```
 
+install KEDA as documented [here](https://keda.sh/docs/latest/deploy/).
+
+## Installation
+
 install the broker-controller from this repository:
 ```
 ko apply -f config/
 ```
+
+## Demo
 
 create a broker:
 
