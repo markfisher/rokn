@@ -115,8 +115,9 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *v1beta1.Broker) pkgre
 	b.Status.ObservedGeneration = b.Generation
 
 	// 1. RabbitMQ Exchange
-	// 2. Ingress Deployment.
-	// 3. K8s Service that points to the Ingress Deployment.
+	// 2. Ingress Deployment
+	// 3. K8s Service that points to the Ingress Deployment
+	// 4. KEDA TriggerAuthentication to be used by ScaledObjects
 
 	rabbitmqURL, err := r.rabbitmqURL(ctx, b)
 	if err != nil {

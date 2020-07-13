@@ -113,7 +113,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 	// 1. RabbitMQ Queue
 	// 2. RabbitMQ Binding
 	// 3. Dispatcher Deployment for Subscriber
-	// 4. KEDA ScaledObject (and TriggerAuthentication but TODO: move to broker)
+	// 4. KEDA ScaledObject
 	rabbitmqURL, err := r.rabbitmqURL(ctx, t)
 	if err != nil {
 		return err
