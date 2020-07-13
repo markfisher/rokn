@@ -10,14 +10,12 @@ helm repo add bitnami https://charts.bitnami.com/bitnami
 helm install rokn bitnami/rabbitmq --set service.type=LoadBalancer
 ```
 
-create a secret containing the host, username, and password for that cluster:
+create a secret containing the brokerURL for that cluster:
 ```sh
 PASSWORD=$(kubectl get secret --namespace default rokn-rabbitmq -o jsonpath="{.data.rabbitmq-password}" | base64 --decode)
 
-kubectl create secret generic rabbitmq-broker-secret \
-    --from-literal=host=rokn-rabbitmq.default \
-    --from-literal=username=user \
-    --from-literal=password=$PASSWORD
+kubectl create secret generic rokn-rabbitmq-broker-secret \
+    --from-literal=brokerURL="amqp://user:$PASSWORD@rokn-rabbitmq.default:5672"
 ```
 
 install KEDA as documented [here](https://keda.sh/docs/latest/deploy/).

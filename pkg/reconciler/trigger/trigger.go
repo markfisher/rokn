@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	kedav1alpha1 "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/v1alpha1"
 
 	"github.com/streadway/amqp"
@@ -37,6 +38,7 @@ import (
 	duckv1 "knative.dev/pkg/apis/duck/v1"
 	"knative.dev/pkg/logging"
 
+	"github.com/markfisher/rokn/pkg/reconciler/broker"
 	"github.com/markfisher/rokn/pkg/reconciler/trigger/resources"
 	"knative.dev/eventing/pkg/apis/eventing/v1beta1"
 	clientset "knative.dev/eventing/pkg/client/clientset/versioned"
@@ -63,10 +65,10 @@ type Reconciler struct {
 	kubeClientSet     kubernetes.Interface
 
 	// listers index properties about resources
-	deploymentLister   appsv1listers.DeploymentLister
-	brokerLister       eventinglisters.BrokerLister
-	triggerLister      eventinglisters.TriggerLister
-	scaledObjectLister kedalisters.ScaledObjectLister
+	deploymentLister            appsv1listers.DeploymentLister
+	brokerLister                eventinglisters.BrokerLister
+	triggerLister               eventinglisters.TriggerLister
+	scaledObjectLister          kedalisters.ScaledObjectLister
 	triggerAuthenticationLister kedalisters.TriggerAuthenticationLister
 
 	dispatcherImage              string
@@ -112,8 +114,9 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 	t.Status.ObservedGeneration = t.Generation
 
 	// 1. RabbitMQ Queue
-	// 2. RabbitMQ Binding.
-	// 3. Dispatcher Deployment for Subscriber + KEDA ScaledObject with 1 RabbitMQ Scaler
+	// 2. RabbitMQ Binding
+	// 3. Dispatcher Deployment for Subscriber
+	// 4. KEDA ScaledObject (and TriggerAuthentication but TODO: move to broker)
 	rabbitmqURL, err := r.rabbitmqURL(ctx, t)
 	if err != nil {
 		return err
@@ -135,11 +138,9 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 	}
 
 	err = resources.MakeBinding(&resources.BindingArgs{
-		Trigger:          t,
-		RoutingKey:       "",
-		RabbitmqHost:     string(secret.Data["host"]),
-		RabbitmqUsername: string(secret.Data["username"]),
-		RabbitmqPassword: string(secret.Data["password"]),
+		Trigger:    t,
+		RoutingKey: "",
+		BrokerURL:  rabbitmqURL,
 	})
 	if err != nil {
 		logging.FromContext(ctx).Error("Problem declaring Trigger Queue Binding", zap.Error(err))
@@ -178,13 +179,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 		return err
 	}
 
-	if _, err = r.reconcileScaleTriggerSecret(rabbitmqURL, t); err != nil {
-		logging.FromContext(ctx).Error("Problem reconciling KEDA trigger Secret", zap.Error(err))
-		t.Status.MarkDependencyFailed("KedaTriggerSecretFailure", "%v", err)
-		return err
-	}
-
-	if _, err = r.reconcileScaleTriggerAuthentication(deployment); err != nil {
+	if _, err = r.reconcileScaleTriggerAuthentication(deployment, secret.Name); err != nil {
 		logging.FromContext(ctx).Error("Problem reconciling KEDA trigger authentication", zap.Error(err))
 		t.Status.MarkDependencyFailed("KedaTriggerAuthenticationFailure", "%v", err)
 		return err
@@ -239,7 +234,7 @@ func (r *Reconciler) reconcileDispatcherDeployment(ctx context.Context, t *v1bet
 	if err != nil {
 		return nil, err
 	}
-	broker, err := r.brokerLister.Brokers(t.Namespace).Get(t.Spec.Broker)
+	b, err := r.brokerLister.Brokers(t.Namespace).Get(t.Spec.Broker)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +244,8 @@ func (r *Reconciler) reconcileDispatcherDeployment(ctx context.Context, t *v1bet
 		//ServiceAccountName string
 		RabbitMQSecretName: rabbitmqSecret.Name,
 		QueueName:          t.Name,
-		BrokerURL:          broker.Status.Address.URL,
+		BrokerUrlSecretKey: broker.BrokerUrlSecretKey,
+		BrokerIngressURL:   b.Status.Address.URL,
 		Subscriber:         sub,
 	})
 	return r.reconcileDeployment(ctx, expected)
@@ -349,43 +345,19 @@ func (r *Reconciler) rabbitmqURL(ctx context.Context, t *v1beta1.Trigger) (strin
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("amqp://%s:%s@%s:5672", s.Data["username"], s.Data["password"], s.Data["host"]), nil
+	val := s.Data[broker.BrokerUrlSecretKey]
+	if val == nil {
+		return "", fmt.Errorf("Secret missing key %s", broker.BrokerUrlSecretKey)
+	}
+	return string(val), nil
 }
 
-func (r *Reconciler) reconcileScaleTriggerSecret(rabbitmqURL string, t *v1beta1.Trigger) (*corev1.Secret, error) {
-	triggerSecret := resources.MakeTriggerSecret(&resources.TriggerSecretArgs{
-		BrokerUrl: rabbitmqURL,
-		Trigger:   t,
-	})
-
-	current, err := r.kubeClientSet.CoreV1().Secrets(t.Namespace).Get(resources.ScaleTriggerSecretName, metav1.GetOptions{})
-	if apierrs.IsNotFound(err) {
-		_, err = r.kubeClientSet.CoreV1().Secrets(t.Namespace).Create(triggerSecret)
-		if err != nil {
-			return nil, err
-		}
-		return triggerSecret, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !equality.Semantic.DeepDerivative(triggerSecret.Data, current.Data) {
-		// Don't modify the informers copy.
-		desired := current.DeepCopy()
-		desired.Data = triggerSecret.Data
-		_, err = r.kubeClientSet.CoreV1().Secrets(desired.Namespace).Update(desired)
-		if err != nil {
-			return nil, err
-		}
-		return desired, nil
-	}
-	return current, nil
-}
-
-func (r *Reconciler) reconcileScaleTriggerAuthentication(deployment *v1.Deployment) (*kedav1alpha1.TriggerAuthentication, error) {
+func (r *Reconciler) reconcileScaleTriggerAuthentication(deployment *v1.Deployment, secretName string) (*kedav1alpha1.TriggerAuthentication, error) {
 	namespace := deployment.Namespace
 	triggerAuthentication := resources.MakeRabbitTriggerAuthentication(&resources.RabbitTriggerAuthenticationArgs{
-		Namespace: namespace,
+		Namespace:  namespace,
+		SecretName: secretName,
+		SecretKey:  broker.BrokerUrlSecretKey,
 	})
 
 	current, err := r.triggerAuthenticationLister.TriggerAuthentications(namespace).Get(resources.TriggerAuthenticationName)
@@ -417,6 +389,7 @@ func (r *Reconciler) reconcileScaledObject(queue *amqp.Queue, deployment *v1.Dep
 		DispatcherDeployment: deployment,
 		QueueName:            queue.Name,
 		Trigger:              trigger,
+		BrokerUrlSecretKey:   broker.BrokerUrlSecretKey,
 	})
 
 	current, err := r.scaledObjectLister.ScaledObjects(so.Namespace).Get(so.Name)

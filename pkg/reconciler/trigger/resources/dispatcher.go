@@ -43,7 +43,8 @@ type DispatcherArgs struct {
 	RabbitMQHost       string
 	RabbitMQSecretName string
 	QueueName          string
-	BrokerURL          *apis.URL
+	BrokerUrlSecretKey string
+	BrokerIngressURL   *apis.URL
 	Subscriber         *apis.URL
 }
 
@@ -77,33 +78,13 @@ func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
 							Name:  system.NamespaceEnvKey,
 							Value: system.Namespace(),
 						}, {
-							Name: "RABBITMQ_HOST",
+							Name: "BROKER_URL",
 							ValueFrom: &corev1.EnvVarSource{
 								SecretKeyRef: &corev1.SecretKeySelector{
 									LocalObjectReference: corev1.LocalObjectReference{
 										Name: args.RabbitMQSecretName,
 									},
-									Key: "host",
-								},
-							},
-						}, {
-							Name: "RABBITMQ_USERNAME",
-							ValueFrom: &corev1.EnvVarSource{
-								SecretKeyRef: &corev1.SecretKeySelector{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: args.RabbitMQSecretName,
-									},
-									Key: "username",
-								},
-							},
-						}, {
-							Name: "RABBITMQ_PASSWORD",
-							ValueFrom: &corev1.EnvVarSource{
-								SecretKeyRef: &corev1.SecretKeySelector{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: args.RabbitMQSecretName,
-									},
-									Key: "password",
+									Key: args.BrokerUrlSecretKey,
 								},
 							},
 						}, {
@@ -113,8 +94,8 @@ func MakeDispatcherDeployment(args *DispatcherArgs) *appsv1.Deployment {
 							Name:  "SUBSCRIBER",
 							Value: args.Subscriber.String(),
 						}, {
-							Name:  "BROKER_URL",
-							Value: args.BrokerURL.String(),
+							Name:  "BROKER_INGRESS_URL",
+							Value: args.BrokerIngressURL.String(),
 						}},
 					}},
 				},

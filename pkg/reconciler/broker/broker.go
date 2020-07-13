@@ -49,6 +49,8 @@ import (
 )
 
 const (
+	BrokerUrlSecretKey = "brokerURL"
+
 	// Name of the corev1.Events emitted from the Broker reconciliation process.
 	brokerReconciled = "BrokerReconciled"
 )
@@ -223,6 +225,7 @@ func (r *Reconciler) reconcileIngressDeployment(ctx context.Context, b *v1beta1.
 		Broker:             b,
 		Image:              r.ingressImage,
 		RabbitMQSecretName: secret.Name,
+		BrokerUrlSecretKey: BrokerUrlSecretKey,
 	})
 	return r.reconcileDeployment(ctx, expected)
 }
@@ -260,30 +263,14 @@ func (r *Reconciler) getRabbitmqSecret(ctx context.Context, b *v1beta1.Broker) (
 	return nil, errors.New("Broker.Spec.Config is required")
 }
 
-func (r *Reconciler) getRabbitmqSecretData(ctx context.Context, s *corev1.Secret, key string) (string, error) {
-	val := s.Data[key]
-	if val == nil {
-		return "", fmt.Errorf("Secret missing key %s", key)
-	}
-	return string(val), nil
-}
-
 func (r *Reconciler) rabbitmqURL(ctx context.Context, b *v1beta1.Broker) (string, error) {
 	s, err := r.getRabbitmqSecret(ctx, b)
 	if err != nil {
 		return "", err
 	}
-	host, err := r.getRabbitmqSecretData(ctx, s, "host")
-	if err != nil {
-		return "", err
+	val := s.Data[BrokerUrlSecretKey]
+	if val == nil {
+		return "", fmt.Errorf("Secret missing key %s", BrokerUrlSecretKey)
 	}
-	username, err := r.getRabbitmqSecretData(ctx, s, "username")
-	if err != nil {
-		return "", err
-	}
-	password, err := r.getRabbitmqSecretData(ctx, s, "password")
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("amqp://%s:%s@%s:5672", username, password, host), nil
+	return string(val), nil
 }
