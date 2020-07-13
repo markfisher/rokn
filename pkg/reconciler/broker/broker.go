@@ -41,6 +41,10 @@ import (
 	brokerreconciler "knative.dev/eventing/pkg/client/injection/reconciler/eventing/v1beta1/broker"
 	eventinglisters "knative.dev/eventing/pkg/client/listers/eventing/v1beta1"
 
+	kedaclientset "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/clientset/versioned"
+	kedalisters "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/client/listers/keda/v1alpha1"
+	kedav1alpha1 "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/v1alpha1"
+
 	"knative.dev/eventing/pkg/duck"
 	"knative.dev/eventing/pkg/reconciler/names"
 	pkgduckv1 "knative.dev/pkg/apis/duck/v1"
@@ -56,15 +60,17 @@ const (
 )
 
 type Reconciler struct {
+	kedaClientset     kedaclientset.Interface
 	eventingClientSet clientset.Interface
 	dynamicClientSet  dynamic.Interface
 	kubeClientSet     kubernetes.Interface
 
 	// listers index properties about resources
-	brokerLister     eventinglisters.BrokerLister
-	serviceLister    corev1listers.ServiceLister
-	endpointsLister  corev1listers.EndpointsLister
-	deploymentLister appsv1listers.DeploymentLister
+	brokerLister                eventinglisters.BrokerLister
+	serviceLister               corev1listers.ServiceLister
+	endpointsLister             corev1listers.EndpointsLister
+	deploymentLister            appsv1listers.DeploymentLister
+	triggerAuthenticationLister kedalisters.TriggerAuthenticationLister
 
 	ingressImage              string
 	ingressServiceAccountName string
@@ -147,6 +153,13 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *v1beta1.Broker) pkgre
 		Scheme: "http",
 		Host:   names.ServiceHostName(ingressEndpoints.GetName(), ingressEndpoints.GetNamespace()),
 	})
+
+	_, err = r.reconcileScaleTriggerAuthentication(ctx, b)
+	if err != nil {
+		logging.FromContext(ctx).Error("Problem creating TriggerAuthentication", zap.Error(err))
+		b.Status.MarkIngressFailed("TriggerAuthenticationFailure", "%v", err)
+		return err
+	}
 
 	// So, at this point the Broker is ready and everything should be solid
 	// for the triggers to act upon.
@@ -243,6 +256,42 @@ func brokerLabels(name string) map[string]string {
 	}
 }
 */
+
+func (r *Reconciler) reconcileScaleTriggerAuthentication(ctx context.Context, b *v1beta1.Broker) (*kedav1alpha1.TriggerAuthentication, error) {
+	secret, err := r.getRabbitmqSecret(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+	namespace := b.Namespace
+	triggerAuthentication := resources.MakeTriggerAuthentication(&resources.TriggerAuthenticationArgs{
+		Broker:     b,
+		SecretName: secret.Name,
+		SecretKey:  BrokerUrlSecretKey,
+	})
+
+	current, err := r.triggerAuthenticationLister.TriggerAuthentications(namespace).Get(triggerAuthentication.Name)
+	if apierrs.IsNotFound(err) {
+		_, err = r.kedaClientset.KedaV1alpha1().TriggerAuthentications(namespace).Create(triggerAuthentication)
+		if err != nil {
+			return nil, err
+		}
+		return triggerAuthentication, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !equality.Semantic.DeepDerivative(triggerAuthentication.Spec, triggerAuthentication.Spec) {
+		// Don't modify the informers copy.
+		desired := current.DeepCopy()
+		desired.Spec = triggerAuthentication.Spec
+		_, err = r.kedaClientset.KedaV1alpha1().TriggerAuthentications(namespace).Update(desired)
+		if err != nil {
+			return nil, err
+		}
+		return desired, nil
+	}
+	return current, nil
+}
 
 func (r *Reconciler) getRabbitmqSecret(ctx context.Context, b *v1beta1.Broker) (*corev1.Secret, error) {
 	if b.Spec.Config != nil {

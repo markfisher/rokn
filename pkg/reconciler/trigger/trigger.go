@@ -21,8 +21,6 @@ import (
 	"errors"
 	"fmt"
 
-	kedav1alpha1 "github.com/markfisher/rokn/pkg/internal/thirdparty/keda/v1alpha1"
-
 	"github.com/streadway/amqp"
 
 	"go.uber.org/zap"
@@ -65,11 +63,10 @@ type Reconciler struct {
 	kubeClientSet     kubernetes.Interface
 
 	// listers index properties about resources
-	deploymentLister            appsv1listers.DeploymentLister
-	brokerLister                eventinglisters.BrokerLister
-	triggerLister               eventinglisters.TriggerLister
-	scaledObjectLister          kedalisters.ScaledObjectLister
-	triggerAuthenticationLister kedalisters.TriggerAuthenticationLister
+	deploymentLister   appsv1listers.DeploymentLister
+	brokerLister       eventinglisters.BrokerLister
+	triggerLister      eventinglisters.TriggerLister
+	scaledObjectLister kedalisters.ScaledObjectLister
 
 	dispatcherImage              string
 	dispatcherServiceAccountName string
@@ -132,11 +129,6 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 		return err
 	}
 
-	secret, err := r.getRabbitmqSecret(ctx, t)
-	if err != nil {
-		return err
-	}
-
 	err = resources.MakeBinding(&resources.BindingArgs{
 		Trigger:    t,
 		RoutingKey: "",
@@ -176,12 +168,6 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, t *v1beta1.Trigger) pkgr
 	if err != nil {
 		logging.FromContext(ctx).Error("Problem reconciling dispatcher Deployment", zap.Error(err))
 		t.Status.MarkDependencyFailed("DeploymentFailure", "%v", err)
-		return err
-	}
-
-	if _, err = r.reconcileScaleTriggerAuthentication(deployment, secret.Name); err != nil {
-		logging.FromContext(ctx).Error("Problem reconciling KEDA trigger authentication", zap.Error(err))
-		t.Status.MarkDependencyFailed("KedaTriggerAuthenticationFailure", "%v", err)
 		return err
 	}
 
@@ -352,44 +338,13 @@ func (r *Reconciler) rabbitmqURL(ctx context.Context, t *v1beta1.Trigger) (strin
 	return string(val), nil
 }
 
-func (r *Reconciler) reconcileScaleTriggerAuthentication(deployment *v1.Deployment, secretName string) (*kedav1alpha1.TriggerAuthentication, error) {
-	namespace := deployment.Namespace
-	triggerAuthentication := resources.MakeRabbitTriggerAuthentication(&resources.RabbitTriggerAuthenticationArgs{
-		Namespace:  namespace,
-		SecretName: secretName,
-		SecretKey:  broker.BrokerUrlSecretKey,
-	})
-
-	current, err := r.triggerAuthenticationLister.TriggerAuthentications(namespace).Get(resources.TriggerAuthenticationName)
-	if apierrs.IsNotFound(err) {
-		_, err = r.kedaClientset.KedaV1alpha1().TriggerAuthentications(namespace).Create(triggerAuthentication)
-		if err != nil {
-			return nil, err
-		}
-		return triggerAuthentication, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !equality.Semantic.DeepDerivative(triggerAuthentication.Spec, triggerAuthentication.Spec) {
-		// Don't modify the informers copy.
-		desired := current.DeepCopy()
-		desired.Spec = triggerAuthentication.Spec
-		_, err = r.kedaClientset.KedaV1alpha1().TriggerAuthentications(namespace).Update(desired)
-		if err != nil {
-			return nil, err
-		}
-		return desired, nil
-	}
-	return current, nil
-}
-
 func (r *Reconciler) reconcileScaledObject(queue *amqp.Queue, deployment *v1.Deployment, trigger *v1beta1.Trigger) error {
 	so := resources.MakeDispatcherScaledObject(&resources.DispatcherScaledObjectArgs{
-		DispatcherDeployment: deployment,
-		QueueName:            queue.Name,
-		Trigger:              trigger,
-		BrokerUrlSecretKey:   broker.BrokerUrlSecretKey,
+		DispatcherDeployment:      deployment,
+		QueueName:                 queue.Name,
+		Trigger:                   trigger,
+		BrokerUrlSecretKey:        broker.BrokerUrlSecretKey,
+		TriggerAuthenticationName: fmt.Sprintf("%s-trigger-auth", trigger.Spec.Broker),
 	})
 
 	current, err := r.scaledObjectLister.ScaledObjects(so.Namespace).Get(so.Name)

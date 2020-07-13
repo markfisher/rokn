@@ -1,3 +1,19 @@
+/*
+Copyright 2020 The Knative Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package resources
 
 import (
@@ -11,38 +27,11 @@ import (
 )
 
 type DispatcherScaledObjectArgs struct {
-	DispatcherDeployment *v1.Deployment
-	QueueName            string
-	Trigger              *v1beta1.Trigger
-	BrokerUrlSecretKey   string
-}
-
-type RabbitTriggerAuthenticationArgs struct {
-	Namespace  string
-	SecretName string
-	SecretKey  string
-}
-
-const TriggerAuthenticationName = "rabbit-trigger-authentication"
-
-// TODO: move this to the Broker reconciler
-func MakeRabbitTriggerAuthentication(args *RabbitTriggerAuthenticationArgs) *kedav1alpha1.TriggerAuthentication {
-	return &kedav1alpha1.TriggerAuthentication{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: args.Namespace,
-			Name:      TriggerAuthenticationName,
-		},
-		Spec: kedav1alpha1.TriggerAuthenticationSpec{
-			SecretTargetRef: []kedav1alpha1.AuthSecretTargetRef{
-				{
-					Parameter: "host",
-					Name:      args.SecretName,
-					Key:       args.SecretKey,
-				},
-			},
-			Env: []kedav1alpha1.AuthEnvironment{},
-		},
-	}
+	DispatcherDeployment      *v1.Deployment
+	QueueName                 string
+	Trigger                   *v1beta1.Trigger
+	BrokerUrlSecretKey        string
+	TriggerAuthenticationName string
 }
 
 func MakeDispatcherScaledObject(args *DispatcherScaledObjectArgs) *kedav1alpha1.ScaledObject {
@@ -78,7 +67,7 @@ func MakeDispatcherScaledObject(args *DispatcherScaledObjectArgs) *kedav1alpha1.
 						"queueLength": "1",
 					},
 					AuthenticationRef: &kedav1alpha1.ScaledObjectAuthRef{
-						Name: TriggerAuthenticationName,
+						Name: args.TriggerAuthenticationName,
 					},
 				},
 			},
