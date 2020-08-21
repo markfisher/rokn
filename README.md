@@ -1,5 +1,7 @@
 # RabbitMQ Knative Eventing Broker
 
+![RabbitMQ Broker for Knative Eventing](rabbitmq-knative-broker.png)
+
 ## Prerequisites
 
 install Knative Serving and Eventing as documented [here](https://knative.dev/docs/install/any-kubernetes-cluster/)
